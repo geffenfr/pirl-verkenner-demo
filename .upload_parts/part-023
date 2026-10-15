@@ -1,0 +1,1057 @@
+tions.filter(d=>obj(d)&&(subject.kind==='actor'?sameSubject(d.subject,subject):d.subject?.kind==='process'&&(!context.process?.id||d.processId===context.process.id))&&(!context.process?.id||d.processId===context.process.id));
+ if(!definitions.length)return readiness(context,'NO_MATCHING_PRODUCTIVITY_DEFINITION');
+ const measurements=definitions.map(definition=>evaluateDefinition({extension:ext,definition,model,context}));
+ const one=measurements.length===1?measurements[0]:null;
+ return deepFreeze({schema:'pirl.task-productivity-projection.v1',contractVersion:CONTRACT_VERSION,sourceId:model.bundleId,subject,status:one?one.status:'SEPARATE_CONTRACT_MEASUREMENTS',value:one?.value??null,unit:one?.unit??null,measurements,observedPeriod:copy(context.observedPeriod||{mode:'FULL'}),measurementCoverageIsProductivity:false,reason:null,ranking:null,actionAuthorized:false});
+}
+function compareProductivityBasis(a,b){
+ const fields=['contractVersion','taskType','acceptanceCriterion','denominatorUnit'];
+ const mismatches=fields.filter(k=>!a?.[k]||a[k]!==b?.[k]);
+ for(const k of ['cohortRule','coverage'])if(!a?.population?.[k]||a.population[k]!==b?.population?.[k])mismatches.push(k);
+ if(a?.subject?.kind!==b?.subject?.kind)mismatches.push('subjectKind');
+ if(JSON.stringify(a?.population?.observedPeriod)!==JSON.stringify(b?.population?.observedPeriod))mismatches.push('observedPeriod');
+ if(a?.value==null||b?.value==null)mismatches.push('measurementNotEstablished');
+ return deepFreeze({status:mismatches.length?'NOT_COMPARABLE':'DECLARED_BASIS_MATCH_ONLY',mismatches,ranking:null,taskDifficultyControlled:false,causalConclusion:false});
+}
+return Object.freeze({SOURCE_SCHEMA,CONTRACT_VERSION,MEASUREMENT_SCHEMA,COHORT_RULE,INPUT_UNITS,readiness,periodBounds,evaluateDefinition,projectTaskProductivity,compareProductivityBasis});
+
+},
+
+"src/presentation/screens/productivity-view.js":function(load){
+"use strict";
+const {escapeHtml:e}=load('src/presentation/html.js');
+const {INPUT_UNITS}=load('src/application/task-productivity.js');
+const ISSUE_TEXT={
+ OVERLAPPING_INPUT_NO_ALLOCATION:['Overlappende actieve inzet bij dezelfde resource; geen toerekeningscontract beschikbaar.','Overlapping active input for the same resource; no allocation contract available.'],
+ NO_VALIDATED_PRODUCTIVITY_MEASUREMENT_CONTRACT:['Geen passend meetcontract in deze bron.','No matching measurement contract in this source.'],
+ NO_MATCHING_PRODUCTIVITY_DEFINITION:['Geen meetdefinitie voor deze selectie.','No measurement definition for this selection.'],
+ EVIDENCE_EXCLUDED:['Gedrags-/inzetonderbouwing is uitgesloten.','Behavior/input evidence is excluded.'],
+ UNSUPPORTED_COHORT_SELECTION:['Deze object-, variant- of populatieselectie heeft geen passend taakcohortcontract.','This object, variant or population selection has no matching task cohort contract.'],
+ INVALID_PRODUCTIVITY_SOURCE:['Het broncontract is ongeldig of onvolledig.','The source contract is invalid or incomplete.'],
+ NO_TASKS_IN_COHORT:['Geen gedeclareerde taken gestart in deze periode/selectie. Geen nulresultaat afgeleid.','No declared tasks started in this period/selection. No zero result inferred.'],
+ INPUT_COVERAGE_NOT_COMPLETE:['De inzetdekking is niet volledig; geen ratio op een deelnoemer.','Input coverage is incomplete; no ratio using a partial denominator.'],
+ OUTPUT_COVERAGE_NOT_COMPLETE:['De resultaatdekking is niet volledig vastgesteld.','Result coverage is not established as complete.'],
+ INVALID_TYPED_INPUT:['Een inzetrecord mist een geldige hoeveelheid, eenheid, actor of tijdsafbakening.','An input record lacks a valid quantity, unit, actor or time boundary.'],
+ ZERO_INPUT_NO_RATIO:['Expliciete nulinput: geen ratio en geen oneindige productiviteit.','Explicit zero input: no ratio and no infinite productivity.'],
+ SHARED_OUTPUT_NOT_ATTRIBUTED:['Gedeeld resultaat: niet volledig toegerekend aan deze deelnemer.','Shared result: not wholly attributed to this participant.'],
+ MIXED_INPUT_UNITS_NO_AGGREGATE:['Verschillende inzetsoorten blijven apart; geen opgeteld uur of totaalscore.','Different input types stay separate; no summed hour or aggregate score.'],
+ TASK_CROSSES_PERIOD_END:['Taak loopt over het periode-einde; geen combinatie van volledige output met afgeknipte inzet.','Task crosses the period end; no full output combined with clipped input.'],
+ OPEN_OR_UNCLOSED_TASK:['Open of niet-afgesloten werk in het cohort; geen volledige ratio.','Open or unclosed work in the cohort; no complete ratio.'],
+ MISSING_FINAL_ACCEPTANCE_RECORD:['De definitieve acceptatie- of afwijzingsregistratie ontbreekt.','The final acceptance or rejection record is missing.'],
+ MISSING_EXPECTED_INPUT:['Verwachte inzetrecords ontbreken.','Expected input records are missing.'],
+ UNDECLARED_INPUT_NOT_DROPPED:['Extra inzet gevonden buiten de gedeclareerde lijst; niet stilzwijgend weggefilterd.','Additional input found outside the declared list; not silently filtered out.'],
+ MISSING_VERIFIABLE_SOURCE_REFERENCE:['Een herleidbare bronverwijzing ontbreekt.','A traceable source reference is missing.'],
+ AMBIGUOUS_RESULT_ACROSS_TASKS:['Hetzelfde resultaat is aan meerdere taken gekoppeld; toerekening onduidelijk.','The same result is linked to multiple tasks; attribution is ambiguous.'],
+ ACCEPTANCE_CRITERION_MISMATCH:['Acceptatiecriteria komen niet overeen.','Acceptance criteria do not match.'],
+ INPUT_UNIT_CONTRACT_MISMATCH:['Inzeteenheid wijkt af van het contract.','Input unit differs from the contract.'],
+ FINAL_DECISION_NOT_UNAMBIGUOUS_LATEST:['De definitieve resultaatstatus is niet eenduidig.','The final result status is not unambiguous.'],
+ NON_FINITE_INPUT_TOTAL:['Geen eindige inzetsom berekenbaar.','No finite input total can be calculated.'],
+ NON_FINITE_RATIO:['Geen eindige ratio berekenbaar.','No finite ratio can be calculated.'],
+ INVALID_PERIOD:['De periodegrenzen zijn ongeldig.','The period boundaries are invalid.'],
+};
+const pick=(pair,language)=>pair[language==='en'?1:0];
+function issueText(code,language='nl'){return ISSUE_TEXT[code]?pick(ISSUE_TEXT[code],language):pick(['Contractvoorwaarde niet voldaan','Contract condition not met'],language)+' · '+String(code||'UNKNOWN');}
+function unitLabel(unit,language='nl'){return INPUT_UNITS[unit]?.[language==='en'?'en':'nl']||String(unit||'—');}
+function number(value,language='nl'){return typeof value==='number'&&Number.isFinite(value)?new Intl.NumberFormat(language==='en'?'en-GB':'nl-NL',{maximumFractionDigits:3}).format(value):'—';}
+function productivityValue(value,unit,language='nl'){return number(value,language)+(value!==null&&value!==undefined&&unit?' '+pick(['resultaat / ','result / '],language)+unitLabel(String(unit).replace('accepted_result/',''),language):'');}
+function statusLabel(m,language='nl'){return pick(m.status==='CALCULATED_WITHIN_CONTRACT'?['Berekend binnen meetcontract','Calculated within measurement contract']:m.status==='PARTIAL_COHORT_CALCULATED'?['Expliciete deelpopulatie · niet extrapoleren','Explicit subcohort · no extrapolation']:['Niet vast te stellen','Not assessable'],language);}
+function renderProductivity(vm,language='nl',{location='primary'}={}){
+ if(!vm)return '';const nl=language!=='en',title=nl?'Taakproductiviteit':'Task productivity';
+ const measurements=vm.measurements||[];
+ const head=`<h3>${title}</h3><p class="tp-purpose">${nl?'Unieke geaccepteerde taakresultaten per gedefinieerde inzet. Geen algemene beoordeling van een medewerker of organisatie.':'Unique accepted task results per defined input. Not a general assessment of an employee or organization.'}</p>`;
+ if(!measurements.length)return `<section class="tp-panel tp-unavailable" data-i18n-resolved data-productivity data-productivity-location="${e(location)}" data-productivity-status="${e(vm.status)}" data-productivity-value="">${head}<b>${nl?'Niet vastgesteld':'Not established'}</b><p>${e(issueText(vm.reason||'INVALID_PRODUCTIVITY_SOURCE',language))}</p><small>${nl?'Meetdekking is geen productiviteit. Bestaande inzet- en kostenmetingen blijven afzonderlijk beschikbaar.':'Measurement coverage is not productivity. Existing input and cost measurements remain separately available.'}</small></section>`;
+ const cards=measurements.map(m=>{
+  const known=m.knownInputByUnit||[],errors=[...new Set((m.issues||[]).map(x=>x.code))];
+  const units=known.map(x=>`${number(x.value,language)} ${unitLabel(x.unit,language)}`).join(' · ')||'—';
+  const phases=(m.knownInputByPhase||[]).filter(x=>x.phase==='CHECK'||x.phase==='REWORK');
+  return `<article class="tp-card" data-productivity-measurement="${e(m.definitionId)}" data-productivity-measurement-status="${e(m.status)}" data-value="${m.value??''}"><h4 data-i18n-source-value>${e(m.label?.[nl?'nl':'en']||m.definitionId)}</h4><strong class="tp-value" data-productivity-ratio>${productivityValue(m.value,m.unit,language)}</strong><b class="tp-status">${statusLabel(m,language)}</b><dl class="tp-metrics"><div><dt>${nl?'Toegerekende geaccepteerde resultaten':'Attributed accepted results'}</dt><dd data-productivity-numerator data-value="${m.numerator??''}">${number(m.numerator,language)}</dd></div><div><dt>${nl?'Bekende inzet · soorten afzonderlijk':'Known input · separate types'}</dt><dd data-productivity-input>${e(units)}</dd></div><div><dt>${nl?'Taakcohort':'Task cohort'}</dt><dd>${m.population.selectedTaskIds.length} ${m.population.selectedTaskIds.length===1?(nl?'geselecteerde taak':'selected task'):(nl?'geselecteerde taken':'selected tasks')}</dd></div></dl>${phases.length?`<p class="tp-review-input">${nl?'Controle / herstel inbegrepen in de bekende inzet:':'Checking / rework included in known input:'} ${phases.map(x=>`${number(x.value,language)} ${unitLabel(x.unit,language)} (${x.phase==='CHECK'?(nl?'controle':'checking'):(nl?'herstel':'rework')})`).join(' · ')}</p>`:''}<p class="tp-coverage" data-productivity-coverage>${nl?'Dekking per taak: output':'Task coverage: output'} ${m.coverage.output.completeTasks}/${m.coverage.output.totalTasks}; ${nl?'inzet':'input'} ${m.coverage.input.completeTasks}/${m.coverage.input.totalTasks}. ${nl?'Volledigheid volgens bronverklaring; niet onafhankelijk geaudit.':'Completeness per source declaration; not independently audited.'}</p>${errors.length?`<div class="tp-cautions" data-productivity-blockers>${errors.slice(0,3).map(code=>`<p data-productivity-issue="${e(code)}">${e(issueText(code,language))}</p>`).join('')}${errors.length>3?`<p>${nl?'Overige contractbeperkingen staan bij de meetbasis.':'Additional contract limitations are in the measurement basis.'}</p>`:''}</div>`:''}<small class="tp-contract">${e(m.definitionId)} · v${e(m.contractVersion)}</small></article>`;
+ }).join('');
+ const details=measurements.map(m=>`<details data-productivity-contract="${e(m.definitionId)}"><summary>${e(m.label?.[nl?'nl':'en']||m.definitionId)} · ${nl?'meetbasis':'measurement basis'}</summary><p>${nl?'Geselecteerd op taakstart in de gekozen periode. Alle inzet en de definitieve resultaatstatus behoren tot diezelfde taaklevenscyclus. Open werk of overschrijding van het periode-einde blokkeert de ratio. Dit verandert de bestaande eventgebonden inzetmeting niet.':'Selected by task start in the chosen period. All input and the final result status belong to that same task lifecycle. Open work or crossing the period end blocks the ratio. This does not change existing event-window input measurements.'}</p><p>${nl?'Bronresultaten worden niet opgeteld per deelnemer. Menselijke taakuren, machine-draaiuren en agentrekenuren blijven verschillende eenheden.':'Source results are not added once per participant. Human task hours, machine run hours and agent compute hours remain different units.'}</p><p>${nl?'Buiten deze periode gestart:':'Started outside this period:'} ${m.population.outsidePeriodTaskIds.length}; ${nl?'buiten de geselecteerde uitvoering:':'outside the selected case:'} ${m.population.outsideCaseTaskIds.length}.</p>${m.population.coverage==='EXPLICIT_SUBCOHORT'?`<p>${e(m.population.exclusionReason)}</p>`:''}${(m.issues||[]).map(x=>`<p>${e(issueText(x.code,language))}${x.recordId?' · '+e(x.recordId):''}</p>`).join('')}<details><summary>${nl?'Volledig meetcontract, bronverwijzingen en afleiding':'Full measurement contract, source references and derivation'}</summary><pre>${e(JSON.stringify(m,null,2))}</pre></details></details>`).join('');
+ return `<section class="tp-panel" data-i18n-resolved data-productivity data-productivity-location="${e(location)}" data-productivity-status="${e(vm.status)}" data-productivity-value="${vm.value??''}">${head}<div class="tp-cards">${cards}</div><p class="tp-boundary">${nl?'Geen rangschikking, benchmarkoordeel, economische opbrengst of voorspelling. Verschillende contracten blijven afzonderlijke metingen.':'No ranking, benchmark verdict, economic revenue or prediction. Different contracts remain separate measurements.'}</p></section><section class="tp-explanation" ${location==='resource'?'':'data-screen-explanation'} data-productivity-explanation="${e(location)}" data-i18n-resolved><h3>${nl?'Taakproductiviteit · verantwoording':'Task productivity · explanation & evidence'}</h3>${details}</section>`;
+}
+return Object.freeze({issueText,unitLabel,productivityValue,statusLabel,renderProductivity});
+
+},
+
+
+
+"src/application/measurement-context.js":function(load){
+"use strict";
+const {zonedMidnightIso}=load("src/application/temporal-context-options.js");
+
+// Scope checks for declared source-period aggregates. This does not allocate or
+// disaggregate amounts and never infers a period from a filename or dataset ID.
+const own=(o,k)=>o!=null&&Object.prototype.hasOwnProperty.call(o,k);
+const read=(o,p)=>String(p||'').split('.').filter(Boolean).reduce((v,k)=>own(v,k)?v[k]:null,o);
+const arr=v=>Array.isArray(v)?v:[];
+const MESSAGES=Object.freeze({
+ SOURCE_PERIOD_MATCH:['Bronperiode en analyseperiode komen overeen. De bronaggregatie blijft onderscheiden van uitvoeringsmetingen.','Source and analysis periods match. The source aggregate remains separate from execution measurements.'],
+ SOURCE_PERIOD_REFERENCE:['Referentiewaarde voor de gedeclareerde bronperiode; geen afleiding uit de geselecteerde uitvoeringen.','Reference value for the declared source period; not derived from the selected executions.'],
+ AGGREGATE_PERIOD_MISMATCH:['De bronwaarde betreft een andere meetperiode. Geen tijdsevenredige verdeling of hergebruik als lokale periodemeting.','The source value concerns a different measurement period. No calendar scaling or reuse as a local period measurement.'],
+ AGGREGATE_SCOPE_MISMATCH:['Deze bronaggregatie is niet toegerekend aan de geselecteerde deelpopulatie.','This source aggregate has not been attributed to the selected subpopulation.'],
+ AGGREGATE_PERIOD_INVALID:['De gedeclareerde bronperiode is ongeldig of niet eenduidig.','The declared source period is invalid or ambiguous.'],
+ AGGREGATE_PERIOD_UNDECLARED:['Voor deze bronaggregatie ontbreekt een expliciet meetperiodecontract.','This source aggregate has no explicit measurement-period contract.'],
+ COHORT_PERIOD_MISMATCH:['De cohortperiode van de bronrecords past niet eenduidig bij het meetperiodecontract.','The source records do not unambiguously match the declared cohort period.'],
+ ANALYSIS_PERIOD_INVALID:['De analyseperiode is ongeldig; geen terugval op de volledige bron.','The analysis period is invalid; there is no fallback to the full source.']
+});
+function utcDate(s){
+ if(typeof s!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(s))return null;
+ const t=Date.parse(s+'T00:00:00Z');return Number.isFinite(t)&&new Date(t).toISOString().slice(0,10)===s?t:null;
+}
+function instant(s){
+ if(typeof s!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(s))return null;
+ const day=utcDate(s.slice(0,10));if(day==null)return null;
+ const h=Number(s.slice(11,13)),m=Number(s.slice(14,16)),sec=Number(s.slice(17,19));
+ if(h>23||m>59||sec>59)return null;const t=Date.parse(s);return Number.isFinite(t)?t:null;
+}
+function declaredPeriod(source,spec){
+ if(!spec||spec.kind!=='SOURCE_PERIOD')return null;
+ const tz=spec.timeZone||read(source,spec.timeZonePath);
+ const from=read(source,spec.startPath),to=read(source,spec.endExclusivePath||spec.endInclusiveDatePath);
+ let start,end;
+ if(spec.endInclusiveDatePath){
+  // Reuse the shared calendar boundary resolver; never add 24 hours across DST.
+  if(utcDate(from)==null||utcDate(to)==null||!tz)return {valid:false,reason:'DATE_OR_TIMEZONE_MISSING'};
+  try {
+   const next=new Date(utcDate(to)+86400000).toISOString().slice(0,10);
+   const midnight=date=>{
+    const [y,m,d]=date.split('-').map(Number),iso=zonedMidnightIso(y,m,d,tz);
+    const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(iso)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
+    if([parts.year,parts.month,parts.day].join('-')!==date||parts.hour!=='00'||parts.minute!=='00')throw Error('Local midnight does not exist');
+    return Date.parse(iso);
+   };
+   start=midnight(from);end=midnight(next);
+  }catch{return {valid:false,reason:'INVALID_OR_UNRESOLVED_TIMEZONE_BOUNDARY'};}
+ }else {start=instant(from);end=instant(to);}
+ if(start==null||end==null||end<=start)return {valid:false,reason:'INVALID_INTERVAL'};
+ return {valid:true,startInclusive:new Date(start).toISOString(),endExclusive:new Date(end).toISOString(),
+  periodId:read(source,spec.periodIdPath),timeZone:tz||'EXPLICIT_TIMESTAMP_OFFSET',
+  provenance:{startPath:spec.startPath,endPath:spec.endExclusivePath||spec.endInclusiveDatePath,endConvention:spec.endInclusiveDatePath?'INCLUSIVE_DATE':'EXCLUSIVE_INSTANT'}};
+}
+function proposeMeasurementContext(source,entity,definition){
+ // Vocabulary-level mapping, not a branch for a bank, persona or example ID.
+ if(definition.record==='manifest.financial_statement.profit_loss'&&(read(source,'manifest.financial_statement.start_date')!=null||read(source,'manifest.financial_statement.end_date')!=null))return {
+  kind:'SOURCE_PERIOD',scope:'SOURCE',startPath:'manifest.financial_statement.start_date',
+  endInclusiveDatePath:'manifest.financial_statement.end_date',timeZonePath:'manifest.time_zone',periodIdPath:'manifest.financial_statement.period_id'};
+ if(definition.fields?.retention_opening_cohort&&definition.fields?.retained_at_period_end&&read(source,'manifest.observation_period')!=null)return {
+  kind:'SOURCE_PERIOD',scope:'SOURCE',startPath:'manifest.observation_period.start',
+  endExclusivePath:'manifest.observation_period.end_exclusive',timeZonePath:'manifest.time_zone',
+  periodIdPath:'manifest.partition.period',cohortField:'retention_cohort_period',cohortMembershipField:'retention_opening_cohort'};
+ return null;
+}
+function measurementContext({source,profile,metric,research=null,entities=null,observedPeriod=null,selectionKind=null}={}){
+ const def=profile?.entities?.[metric?.population]||{},spec=metric?.measurement_context||def.measurement_context;
+ const isAggregate=Boolean(spec||def.record||metric?.population==='period'||(def.fields?.retention_opening_cohort&&def.fields?.retained_at_period_end));
+ if(!isAggregate)return null;
+ const p=observedPeriod||research?.scope?.temporal?.observedPeriod||research?.summary?.temporal?.observedPeriod||research?.scope?.observedPeriod||null;
+ const kind=selectionKind||research?.scope?.selection?.kind||'dataset',bounded=p&&p.mode!=='FULL';
+ const period=declaredPeriod(source,spec);
+ const finish=(code,blocked)=>({schema:'pirl.measurement-context.v1',code,blocked,kind:'SOURCE_PERIOD',
+  sourcePeriod:period?.valid?period:null,observedPeriod:p?structuredClone(p):null,selectionKind:kind,
+  populationBasis:'SOURCE_DECLARED_AGGREGATE_NOT_EXECUTION_TOTAL',calendarScaling:false,
+  gapKind:blocked?(code==='AGGREGATE_PERIOD_UNDECLARED'?'MEASUREMENT_CONTRACT_GAP':code==='AGGREGATE_PERIOD_MISMATCH'?'SOURCE_DISAGGREGATION_UNAVAILABLE':'SCOPE_OR_PERIOD_INCOMPATIBLE'):null,
+  message:MESSAGES[code]||[code,code],sourceContextPaths:spec?Object.values(spec).filter(x=>typeof x==='string'&&x.startsWith('manifest.')):[]});
+ if(kind!=='dataset')return finish('AGGREGATE_SCOPE_MISMATCH',true);
+ if(!spec)return finish(bounded?'AGGREGATE_PERIOD_UNDECLARED':'SOURCE_PERIOD_REFERENCE',Boolean(bounded));
+ if(!period?.valid)return finish('AGGREGATE_PERIOD_INVALID',true);
+ if(spec.cohortField){
+  const id=period.periodId,rows=arr(entities?.[metric.population]).filter(r=>r[spec.cohortMembershipField]===true);
+  if(id==null||rows.some(r=>r[spec.cohortField]==null||String(r[spec.cohortField])!==String(id)))return finish('COHORT_PERIOD_MISMATCH',true);
+ }
+ if(!bounded)return finish('SOURCE_PERIOD_REFERENCE',false);
+ const a=instant(p.startInclusive),b=instant(p.endExclusive);
+ if(a==null||b==null||b<=a)return finish('ANALYSIS_PERIOD_INVALID',true);
+ if(a!==Date.parse(period.startInclusive)||b!==Date.parse(period.endExclusive))return finish('AGGREGATE_PERIOD_MISMATCH',true);
+ return finish('SOURCE_PERIOD_MATCH',false);
+}
+return Object.freeze({measurementContext,proposeMeasurementContext,declaredPeriod,instant,utcDate,MESSAGES});
+
+},
+
+"src/application/decision-measurements.js":function(load){
+"use strict";
+const {deepFreeze}=load('src/core/data/immutability.js');
+const {DECISION_LENSES}=load('src/domain/decision-lenses.js');
+const {buildGoalNormCatalogue}=load('src/application/goal-norm-catalogue.js');
+const arr=x=>Array.isArray(x)?x:[],str=x=>x==null?'':String(x),finite=x=>typeof x==='number'&&Number.isFinite(x);
+const lower=x=>str(x).trim().toLowerCase();
+// Classification concerns the question asked, never a new measurement formula.
+// Explicit source responsibility/category takes precedence. Unknown categories
+// remain visible as unassigned; they are not guessed from IDs or dataset names.
+function lensMapping(item){
+ if(item.responsibleLens){const found=DECISION_LENSES.filter(l=>[l.id,l.nl,l.en].some(x=>lower(x)===lower(item.responsibleLens)));return {ids:found.map(l=>l.id),basis:'SOURCE_RESPONSIBLE_LENS'};}
+ return {ids:DECISION_LENSES.filter(l=>l.categories.includes(item.category.value)).map(l=>l.id),basis:item.category.provenance};
+}
+const IP_METRICS=new Set(['decision_provenance_rate','decision_provenance_completeness_rate','unauthorized_action_count','unauthorized_financial_actions']);
+const FLOW_METRICS=new Set(['completed_case_count','cancellation_rate','aborted_case_rate']);
+const MIXED_METRICS=new Set(['cycle_time_hours','material_alert_detection_rate','critical_lineage_completeness','first_time_right','first_time_right_rate','payment_success_rate','stp_rate','commitment_met_rate','cases_with_max_two_handovers_rate','responsible_approval_rate','invoice_accuracy_rate','recovery_sla_rate','complaint_sla_rate','complaints_acknowledged_within_4h_rate']);
+function evidenceDependencies(metric){
+ if(IP_METRICS.has(metric))return ['ip'];
+ if(FLOW_METRICS.has(metric))return ['behavior'];
+ if(MIXED_METRICS.has(metric))return ['behavior','value'];
+ if(/(?:cost|income|profit|revenue|margin|retention|satisfaction|customer_contacts|fraud_loss|sustainable_arrangement|days_sales_outstanding)/.test(metric))return ['value'];
+ // An unknown dependency cannot silently reuse an excluded evidence family.
+ return ['ip','behavior','value'];
+}
+function measurementUnit(goal,m){
+ const raw=str(m.unit||goal.target?.unit)||null;
+ return raw==='index_or_ratio'&&['cost_income_ratio','retention_rate','first_time_right'].includes(goal.metric)?'ratio':raw;
+}
+function proofOf(m){
+ const p={};
+ // These are qualifications produced by the existing shared measurement engine.
+ // Full input identity is reproducible through source/scope/formula; ID lists are
+ // explicitly labelled samples, not deceptively truncated evidence populations.
+ for(const k of ['schema','metricId','profileId','contractId','sourceProfileId','measurementContractId','sourceFields','measurementEngine','population','populationKind','populationStatus','measurementStatus','status','formula','expression','numerator','denominator','measurementDenominator','observations','missing','coverage','unit','reason','evidenceState','calculationState','attributionState','projectionState','goalAchievement','completeGoalPopulation','measurementContext','sourceContext','context','assumptions'])if(m[k]!==undefined)p[k]=structuredClone(m[k]);
+ const ids=[...new Set(arr(m.sourceOutcomeIds).concat(arr(m.sourceRecordIds),arr(m.sourceIds)).map(str))];
+ return {...p,sourceRecordCount:ids.length,sourceRecordSample:ids.slice(0,20),sourceRecordsAreSample:true};
+}
+/** Read-only integration of the actual Norms/Goals result, never source.actual.
+ * A stale/different population is rejected. This is not an effect model.
+ */
+function projectDecisionMeasurements({research,context={},included={},goalView=null}={}){
+ const empty={schema:'pirl.decision-measurements.v1',status:'MEASUREMENT_READER_NOT_CONNECTED',facts:[],unassignedFactIds:[],excludedByEvidence:[],notApplicable:[],sourceGoalCount:arr(research?.source?.goals).length};
+ if(!research?.valid||!research.source)return deepFreeze({...empty,status:'INVALID_SCOPE'});
+ if(!goalView)return deepFreeze(empty);
+ if(goalView.researchScope?.key!==research.scope.key||goalView.researchScope?.sourceKey!==research.scope.sourceKey)return deepFreeze({...empty,status:'MEASUREMENT_POPULATION_MISMATCH'});
+ const cat=goalView.catalogue||buildGoalNormCatalogue({goals:research.source.goals,norms:research.source.norms,observedPeriod:context.observedPeriod});
+ const byKey=new Map(arr(cat.items).filter(i=>i.kind==='goal').map(i=>[i.key,i])),facts=[],excluded=[],notApplicable=[];
+ for(const item of byKey.values())if(item.applicability?.status==='NOT_APPLICABLE')notApplicable.push({key:item.key,id:item.id,reason:'SOURCE_REFERENCE_NOT_APPLICABLE_TO_RESEARCH_SCOPE'});
+ const unassigned=[],unresolved=[];
+ for(const goal of arr(goalView.goals)){
+  const item=byKey.get(goal.catalogueKey);
+  if(!item){unresolved.push({id:goal.goal_id||null,reason:'CATALOGUE_IDENTITY_NOT_RESOLVED'});continue;}
+  const dependencies=evidenceDependencies(str(goal.metric));
+  if(dependencies.some(id=>included[id]!==true)){excluded.push({key:item.key,id:item.id,requiredEvidence:dependencies,reason:'REQUIRED_EVIDENCE_EXCLUDED'});continue;}
+  const m=goal.measurement||{},mapping=lensMapping(item),unit=measurementUnit(goal,m),hasValue=finite(m.value)&&m.measurementContext?.blocked!==true;
+  const proof=proofOf(m),focusOnly=Boolean(context.focus)&&!research.scope.selection?.entity;
+  const fact={id:'goal_measurement:'+item.key,nl:item.name,en:item.name,value:hasValue?m.value:null,unit,
+   sourceUnit:m.unit||goal.target?.unit||null,metric:str(goal.metric),goalId:item.id,catalogueKey:item.key,
+   measurementLevel:m.measurementContext?.kind==='SOURCE_PERIOD'?'SOURCE_PERIOD_REFERENCE':'SCOPED_GOAL_MEASUREMENT',status:hasValue?'CALCULATED':(m.measurementStatus||m.status||'NOT_ESTABLISHED'),
+   measurementStatus:m.measurementStatus||m.status||null,requiredEvidence:dependencies,lensIds:mapping.ids,mappingBasis:mapping.basis,
+   category:structuredClone(item.category),sourceLabel:true,
+   subject:{kind:research.scope.selection.kind,scopeRef:item.scope?.scopeRef||null,focusRetainedOnly:focusOnly,resourceAllocation:false},
+   target:structuredClone(item.target),targetComparison:goal.localTargetComparison||'NOT_COMPARABLE',targetComparisonReason:goal.localTargetComparisonReason||null,targetPopulation:structuredClone(goal.targetPopulationComparison||null),
+   provenance:{sourceKey:research.scope.sourceKey,populationKey:research.scope.key,collection:'shared-goal-measurements',recordCount:proof.sourceRecordCount,sampleIds:proof.sourceRecordSample,sampleOnly:true,
+    query:'Same scoped Norms/Goals measurement; '+str(m.formula||m.expression||'no executable measurement'),sourceReference:structuredClone(item.provenance),referenceScope:structuredClone(item.scope),measurementPeriod:structuredClone(item.measurementPeriod),measurement:proof},
+   actionAuthorized:false,projected:false};
+  facts.push(fact);if(!mapping.ids.length)unassigned.push(fact.id);
+ }
+ return deepFreeze({...empty,status:unresolved.length?'PARTIAL_IDENTITY_GAP':'CONNECTED',facts,unassignedFactIds:unassigned,excludedByEvidence:excluded,notApplicable,unresolvedReferences:unresolved,
+  measuredCount:facts.filter(f=>f.value!==null).length,sourceGoalCount:byKey.size,scopeKey:research.scope.key,sourceKey:research.scope.sourceKey,formulasChanged:false});
+}
+return Object.freeze({projectDecisionMeasurements,lensMapping,evidenceDependencies,measurementUnit});
+
+},
+"src/application/resource-type-measurements.js":function(load){
+"use strict";
+const {deepFreeze}=load('src/core/data/immutability.js');
+const arr=x=>Array.isArray(x)?x:[],text=x=>x==null?'':String(x),numeric=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
+/** Descriptive input totals by declared source actor type. No pooled hours across
+ * human/machine/AI types, no capacity or inferred productivity, no allocation.
+ * Denominators are explicit event-actor participation pairs, not headcount/FTE.
+ */
+function resourceTypeMeasurements({research,context={},included={}}={}){
+ if(!research?.valid||!research.source||context.focus?.kind==='actor')return [];
+ const actors=new Map(arr(research.source.actors).map(a=>[text(a.actor_id||a.id),a]));
+ const groups=new Map();
+ function group(aid){const actor=actors.get(aid),type=text(actor?.actor_type||actor?.resource_type)||'UNDECLARED';let g=groups.get(type);if(!g){g={type,actors:new Set(),pairs:new Set(),events:new Set(),effort:{sum:0,count:0,missing:0,invalid:0,pairs:new Set(),refs:[]},cost:{sum:0,count:0,missing:0,invalid:0,pairs:new Set(),refs:[]}};groups.set(type,g);}g.actors.add(aid);return g;}
+ for(const [ei,e] of arr(research.scope?.records?.events).entries()){
+  const eid=text(e.event_id||e.id)||'unidentified-event:'+ei,participants=new Set(arr(e.actor_ids).map(text));
+  for(const [ui,u] of arr(e.resource_usage).entries()){
+   if(!u||!text(u.actor_id))continue;
+   const aid=text(u.actor_id);participants.add(aid);const g=group(aid),pair=JSON.stringify([eid,aid]);
+   for(const [key,field] of [['effort','duration_seconds'],['cost','cost_eur']]){const s=g[key],v=u[field];if(v==null)s.missing++;else if(!numeric(v))s.invalid++;else{s.sum+=v;s.count++;s.pairs.add(pair);if(s.refs.length<20)s.refs.push({eventId:eid,usageIndex:ui,actorId:aid,value:v});}}
+  }
+  for(const aid of participants){if(!aid)continue;const g=group(aid);g.pairs.add(JSON.stringify([eid,aid]));g.events.add(eid);}
+ }
+ const facts=[];
+ for(const g of [...groups.values()].sort((a,b)=>a.type.localeCompare(b.type))){
+  for(const [key,unit,nl,en,dependency] of [['effort','hours','Geregistreerde inzet','Recorded effort','behavior'],['cost','EUR','Directe resourcekosten','Direct resource costs','value']]){
+   if(included[dependency]!==true)continue;
+   const s=g[key],sum=key==='effort'?s.sum/3600:Math.round((s.sum+Number.EPSILON)*100)/100,value=s.count&&Number.isFinite(sum)&&!(g.type==='UNDECLARED'&&key==='effort')?sum:null;
+   const unmeasuredPairs=g.pairs.size-s.pairs.size,measurementStatus=value==null?'NOT_ESTABLISHED':unmeasuredPairs||s.missing||s.invalid?'PARTIAL':'RECORDED';
+   facts.push({id:'resource_type_'+key+':'+encodeURIComponent(g.type),nl:nl+' · '+g.type,en:en+' · '+g.type,value,unit,measurementStatus,status:value==null?'NOT_ESTABLISHED':'CALCULATED',measurementLevel:'TYPED_RECORDED_RESOURCE_INPUT',sourceActorType:g.type,lensIds:key==='cost'?['resources','finance']:g.type==='CUSTOMER'?['resources','operations','customer']:['resources','operations'],requiredEvidence:[dependency],
+    provenance:{sourceKey:research.scope.sourceKey,populationKey:research.scope.key,collection:'events.resource_usage',recordCount:s.count,sampleIds:s.refs.map(x=>x.eventId),sampleOnly:true,
+     query:'Sum explicit non-negative '+(key==='effort'?'duration_seconds / 3600':'cost_eur')+' by declared source actor_type; event-actor pairs define coverage',
+     actorType:g.type,actorCount:g.actors.size,participationPairs:g.pairs.size,measuredPairs:s.pairs.size,unmeasuredPairs,coverage:g.pairs.size?s.pairs.size/g.pairs.size:null,missingRecords:s.missing,invalidRecords:s.invalid,sampleRecordRefs:s.refs,
+     includesUsageOnlyParticipants:true,unitsMixed:false,totalInputEstablished:false,costDerivedFromRate:false,capacityEstablished:false,productivityEstablished:false},actionAuthorized:false});
+  }
+ }
+ return deepFreeze(facts);
+}
+return Object.freeze({resourceTypeMeasurements});
+
+},
+"src/presentation/screens/decision-measurements-view.js":function(load){
+"use strict";
+const {escapeHtml:e}=load('src/presentation/html.js');
+const {resourceMetricStatus}=load('src/application/resource-usage-measurement.js');
+const special=f=>f?.measurementLevel==='SCOPED_GOAL_MEASUREMENT'||f?.measurementLevel==='SOURCE_PERIOD_REFERENCE'||f?.measurementLevel==='TYPED_RECORDED_RESOURCE_INPUT'||f?.measurementLevel==='SOURCE_LENS_DIAGNOSTIC';
+function measuredValue(f,language='nl'){
+ const en=language==='en',unit=f.unit;
+ if(f.value==null||!Number.isFinite(f.value))return '—';
+ const value=new Intl.NumberFormat(en?'en-GB':'nl-NL',unit==='EUR'?{style:'currency',currency:'EUR'}:unit==='ratio'?{style:'percent',maximumFractionDigits:2}:{maximumFractionDigits:unit==='count'?0:3}).format(f.value);
+ const suffix=unit==='hours'?(en?' h':' u'):!unit||['EUR','ratio','count'].includes(unit)?'':' '+unit;
+ return value+suffix;
+}
+function measureQualifier(f,language){
+ const en=language==='en',ctx=f.provenance?.measurement?.measurementContext;
+ if(ctx?.message)return ctx.message[en?1:0];
+ if(f.measurementLevel==='TYPED_RECORDED_RESOURCE_INPUT')return resourceMetricStatus({status:f.measurementStatus},language)+(en?'; recorded per source resource type, not capacity or productivity.':'; geregistreerd per bronresourcetype, geen capaciteit of productiviteit.');
+ if(f.measurementLevel==='SOURCE_LENS_DIAGNOSTIC')return en?'Direct descriptive source measurement in the active research population; not a target, effect or causal claim.':'Directe beschrijvende bronmeting in de actieve onderzoekspopulatie; geen doel-, effect- of causaliteitsclaim.';
+ if(f.measurementStatus==='PARTIAL_OBSERVATIONS')return en?'Partial source measurement: the declared minimum coverage is not met.':'Gedeeltelijke bronmeting: de gedeclareerde minimumdekking is niet gehaald.';
+ if(f.value===null)return en?'Not assessable in this research context; the measurement definition below distinguishes source, attribution and implementation limitations.':'Niet beoordeelbaar in deze onderzoekscontext; de meetdefinitie hieronder onderscheidt bron-, toerekenings- en implementatiebeperkingen.';
+ return en?'Same scoped measurement as Norms, Goals & Results.':'Dezelfde contextgebonden meting als bij Normen, doelen & resultaten.';
+}
+function renderMeasuredFact(f,language='nl'){
+ if(!f)return '';const en=language==='en',p=f.provenance||{};
+ const basis=f.subject?.focusRetainedOnly?(en?'Research population; not allocated to the selected focus.':'Onderzoekspopulatie; niet toegerekend aan de geselecteerde focus.'):f.measurementLevel==='TYPED_RECORDED_RESOURCE_INPUT'?(en?'Typed recorded resource input':'Getypeerde geregistreerde resource-inzet'):f.measurementLevel==='SOURCE_LENS_DIAGNOSTIC'?(en?'Descriptive source measurement in the active population':'Beschrijvende bronmeting in de actieve populatie'):(en?'Population defined by the measurement below':'Populatie volgens onderstaande meetdefinitie');
+ const target=f.target?`<div class="v30-target">${en?'Reference target':'Referentiedoel'}: ${e(f.target.operator||'')} ${e(typeof f.target.value==='number'?measuredValue({value:f.target.value,unit:f.unit||f.target.unit},language):f.target.value)} · ${f.targetComparison==='NOT_COMPARABLE'?(en?'No justified target comparison in this context':'Geen verantwoorde doeltoets in deze context'):f.targetComparison==='LOCAL_VALUE_MEETS_TARGET'?(en?'Measured value meets this boundary; not a causal or projected claim':'Meetwaarde voldoet aan deze grens; geen causale of verwachte-effectclaim'):(en?'Measured value does not meet this boundary':'Meetwaarde voldoet niet aan deze grens')}</div>`:'';
+ return `<article class="v30-measured-fact" data-decision-fact="${e(f.id)}" data-source-measurement="${e(f.catalogueKey||f.id)}" data-measurement-value="${e(f.value==null?'':f.value)}"><div class="v30-measure-heading"><b data-i18n-source-value>${e(f[en?'en':'nl'])}</b><strong>${e(measuredValue(f,language))}</strong></div><p class="v30-measure-note">${e(measureQualifier(f,language))}</p>${f.subject?.focusRetainedOnly?`<p class="v30-measure-note v30-focus-warning">${e(basis)}</p>`:''}${target}<details class="v30-measure-proof"><summary>${en?'Inspect measurement and source':'Meting en bron onderzoeken'}</summary><dl class="v29-kv"><dt>${en?'Basis':'Meetbasis'}</dt><dd>${e(basis)}</dd><dt>${en?'Definition':'Definitie'}</dt><dd data-i18n-source-value>${e(p.query||'—')}</dd><dt>${en?'Source / document':'Bron / document'}</dt><dd data-i18n-source-value>${e(p.sourceReference?.sourceId||'—')} · ${e(p.sourceReference?.sourceDocumentId||'—')}</dd><dt>${en?'Source scope':'Bronscope'}</dt><dd data-i18n-source-value>${e(p.referenceScope?.scope||f.sourceActorType||'—')} · ${e(p.referenceScope?.scopeRef||'—')}</dd><dt>${en?'Recorded unit':'Geregistreerde eenheid'}</dt><dd data-i18n-source-value>${e(f.sourceUnit||f.unit||'—')}</dd><dt>${en?'Evidence selection':'Onderbouwingsselectie'}</dt><dd>${e((f.requiredEvidence||[]).map(x=>({ip:en?'Information position':'Informatiepositie',behavior:en?'Behavior':'Gedrag',value:en?'Value':'Waarde'})[x]||x).join(' / '))}</dd></dl><p class="v30-measure-note">${en?'Only the declared source measurements are used. The displayed source-ID sample is not the full input; source, population and formula identify it.':'Alleen gedeclareerde bronmetingen worden gebruikt. De getoonde bron-ID-steekproef is niet de volledige invoer; bron, populatie en formule identificeren deze.'}</p><pre data-i18n-source-value>${e(JSON.stringify(p,null,2))}</pre></details></article>`;
+}
+function renderLensMeasurements(ids,facts,language='nl'){
+ const en=language==='en',items=(ids||[]).map(id=>facts.get(id)).filter(special);if(!items.length)return '';
+ return `<div class="v30-measurements" data-lens-measurements><p class="v30-measure-count">${items.length} ${en?'contextual measurements':'contextgebonden metingen'}</p>${items.slice(0,3).map(f=>renderMeasuredFact(f,language)).join('')}${items.length>3?`<details class="v30-more-measurements"><summary>${en?'Show all other measurements':'Alle overige metingen tonen'} (${items.length-3})</summary>${items.slice(3).map(f=>renderMeasuredFact(f,language)).join('')}</details>`:''}</div>`;
+}
+function renderUnassignedMeasurements(vm,facts,language='nl'){
+ const en=language==='en',meta=vm.measurementIntegration;if(!meta)return '';
+ const ids=meta.unassignedFactIds||[];
+ const disconnected=['MEASUREMENT_POPULATION_MISMATCH','PARTIAL_IDENTITY_GAP'].includes(meta.status)?`<p class="v29-note" role="alert">${en?'Some measurement identities do not match the active population; these are not reused.':'Sommige meetidentiteiten passen niet bij de actieve populatie; deze worden niet hergebruikt.'}</p>`:'';
+ const excluded=meta.excludedByEvidence?.length||0;
+ return `${disconnected}${excluded?`<p class="v30-measure-note">${excluded} ${en?'goal measurements excluded because their required evidence is switched off.':'doelmetingen uitgesloten omdat hun benodigde onderbouwing is uitgeschakeld.'}</p>`:''}${ids.length?`<details class="v30-unassigned"><summary>${en?'Source measurements without a mapped Board perspective':'Bronmetingen zonder gekoppeld bestuurlijk perspectief'} (${ids.length})</summary><p>${en?'The source category or responsibility has no exact mapping to the seven perspectives. Measurements remain inspectable, without an inferred assignment.':'De broncategorie of verantwoordelijkheid heeft geen exacte koppeling met de zeven perspectieven. Metingen blijven onderzoekbaar, zonder geraden toewijzing.'}</p>${ids.map(id=>renderMeasuredFact(facts.get(id),language)).join('')}</details>`:''}`;
+}
+function renderSourceFieldDispositions(vm,language='nl',lensId=null){
+ const en=language==='en',idx=en?1:0,meta=vm?.sourceLensDepth?.fieldDispositions;
+ const entries=(meta?.entries||[]).filter(x=>!lensId||x.lensIds.includes(lensId));if(!entries.length)return '';
+ const labels={RECONCILED_TO_EXISTING_TYPED_INPUT:['Gedekt via bestaande getypeerde inzet — registratiegelijkheid gecontroleerd','Covered by existing typed input — record equality checked'],SOURCE_PRESENT_SEMANTICS_UNCONTRACTED:['Bron aanwezig; betekenis onvoldoende gecontracteerd','Source present; semantics not sufficiently contracted'],FIELD_NOT_PRESENT_IN_SCOPE:['Veld niet aanwezig in deze onderzoeksselectie','Field not present in this research selection'],NO_RECORDS_IN_SCOPE:['Geen bronrecords in deze onderzoeksselectie','No source records in this research selection'],WITHHELD_BY_EVIDENCE:['Niet gebruikt: onderbouwing uitgeschakeld','Not used: evidence disabled'],WITHHELD_FOCUS_NOT_ALLOCATION:['Niet toegerekend aan de huidige focus','Not allocated to current focus']};
+ return `<details class="v30-unassigned" data-source-field-dispositions><summary>${en?'Source fields: coverage and meaning':'Bronvelden: dekking en betekenis'}</summary><p>${en?'Source-record information, not extra KPIs. Record equality is limited to this source and population; missing values are not zero.':'Bronrecordinformatie, geen extra KPI’s. Registratiegelijkheid geldt alleen voor deze bron en populatie; ontbrekende waarden zijn niet nul.'}</p>${entries.map(x=>`<article data-source-field-status="${e(x.status)}"><p data-i18n-source-value><strong>${e(x.fieldPath)}</strong></p><p>${e((labels[x.status]||[x.status,x.status])[idx])}</p><p>${e(x.limitation[idx])}</p>${x.canonicalFactId?`<p>${en?'Same existing fact':'Dezelfde bestaande meting'}: <span data-i18n-source-value>${e(x.canonicalFactId)}</span>. ${en?'No additional amount.':'Geen aanvullend bedrag.'}</p>`:''}${x.provenance?`<p>${en?'Records with this field':'Records met dit veld'}: ${x.provenance.presentRecords} / ${x.provenance.scopeRecordCount}. ${en?'Coverage, not performance.':'Dekking, geen prestatie.'}</p><details><summary>${en?'Source records and qualification (sample)':'Bronrecords en verantwoording (steekproef)'}</summary><pre data-i18n-source-value>${e(JSON.stringify(x,null,2))}</pre></details>`:''}</article>`).join('')}</details>`;
+}
+return Object.freeze({renderSourceFieldDispositions,isDecisionMeasurement:special,measuredValue,renderMeasuredFact,renderLensMeasurements,renderUnassignedMeasurements});
+
+},
+
+
+"src/application/focus-record-population.js":function(load){
+"use strict";
+const array=value=>Array.isArray(value)?value:[];
+const text=value=>value==null?'':String(value);
+/** Consume the same verified membership as the main analyses. Never widen an
+ * invalid or empty selection. Legacy simple-input calls remain supported, but
+ * cannot interpret a pattern or entity without a canonical scope. */
+function focusRecordPopulation({runtimeSnapshot,context={},researchScope=null}={}) {
+ let model=runtimeSnapshot?.model;
+ const result=(status,events=[],decisions=[],reason=null)=>({status,events,decisions,reason,
+  sourceKey:researchScope?.sourceKey||null,populationKey:researchScope?.key||null});
+ if(!model)return result('NO_DATASET');
+ if(researchScope){
+  const source=researchScope.source,current=runtimeSnapshot?.source;
+  if(source&&(text(source.id)!==text(current?.id)||source.generation!==runtimeSnapshot?.generation))
+   return result('INVALID_SCOPE',[],[],'SOURCE_OR_ACTIVATION_MISMATCH');
+  if(['INVALID','NO_DATASET'].includes(researchScope.status))
+   return result('INVALID_SCOPE',[],[],'CANONICAL_SCOPE_NOT_VALID');
+  if(!researchScope.records)return result('INVALID_SCOPE',[],[],'CANONICAL_RECORDS_UNAVAILABLE');
+  if(researchScope.source)return result('CANONICAL_MEMBERSHIP',array(researchScope.records.events),array(researchScope.records.decisions));
+  // Older pure-projection clients supply records without a canonical source identity.
+  // Retain their existing explicit process/case/time filter, never bypass it.
+  model={...model,...researchScope.records};
+ }
+ if(context.pattern||context.variant||context.entity||context.object||context.caseSet||context.population)
+  return result('INVALID_SCOPE',[],[],'CANONICAL_SCOPE_REQUIRED');
+ // Compatibility for direct, small-record projection clients. Application paths
+ // pass researchScope, including physical-evidence snapshots and Board facts.
+ function included(record){
+  if(context.process?.id&&text(record.process_id)!==text(context.process.id))return false;
+  if(context.case?.id&&text(record.case_id||record.attributes?.case_id||record.attributes?.case_object_id)!==text(context.case.id))return false;
+  const p=context.observedPeriod;
+  if(p&&p.mode!=='FULL'){
+   const t=Date.parse(record.timestamp||record.time||record.datetime||record.decision_time||record.recorded_at||'');
+   const start=Date.parse(p.startInclusive),end=Date.parse(p.endExclusive);
+   if(!Number.isFinite(t)||!Number.isFinite(start)||!Number.isFinite(end)||start>=end||t<start||t>=end)return false;
+  }
+  return true;
+ }
+ return result('DECLARED_SIMPLE_INPUT',array(model.events).filter(included),array(model.decisions).filter(included));
+}
+return Object.freeze({focusRecordPopulation});
+
+},
+
+"src/application/relationship-context.js":function(load){
+"use strict";
+const {deepFreeze}=load("src/core/data/immutability.js");
+
+const arr=v=>Array.isArray(v)?v:[];
+const text=v=>v==null?"":String(v);
+const idOf=(row,key)=>text(row?.[key]??row?.id);
+
+function reasonSummary(membership){
+  return arr(membership?.reasons).map(reason=>structuredClone(reason));
+}
+
+function pairSamples(rows,memberships,idKey,limit=20,extra=()=>({})){
+  return arr(rows).slice(0,limit).map((row,index)=>({
+    id:idOf(row,idKey),
+    ...extra(row),
+    membershipReasons:reasonSummary(arr(memberships)[index]),
+  }));
+}
+
+function relationSnapshot(row){
+  return {
+    id:idOf(row,"relation_id")||null,
+    type:text(row?.relation_type||row?.type||"UNSPECIFIED")||"UNSPECIFIED",
+    sourceObjectId:text(row?.source_object_id??row?.source_id)||null,
+    targetObjectId:text(row?.target_object_id??row?.target_id)||null,
+  };
+}
+
+function objectSnapshot(row){
+  return {
+    id:idOf(row,"object_id"),
+    type:text(row?.object_type||row?.type)||null,
+    label:text(row?.name||row?.label)||null,
+  };
+}
+
+function objectDepth2Empty(status,{sourceKey=null,populationKey=null,seedObjectId=null,directNeighborIds=[],unresolvedEndpointIds=[],invalidRelations=[]}={}){
+  return {
+    schema:"pirl.relationship-object-depth2.v1",status,mode:"OBJECT_EXACT_DEPTH2",
+    sourceKey,populationKey,seedObjectId,
+    directNeighborIds:[...directNeighborIds].sort(),
+    pathCount:0,hop2ObjectCount:0,paths:[],hop2Objects:[],
+    unresolvedEndpointIds:[...new Set(unresolvedEndpointIds)].sort(),
+    invalidRelations:structuredClone(invalidRelations),
+    exactDepth:2,endpointReachability:"SYMMETRIC_RAW_DIRECTION_PRESERVED",
+    synthesizedSeedToHop2Relations:0,contextExpandsResearchPopulation:false,
+    primaryMembershipChanged:false,neighbourHistoryImported:false,
+    propagationSemanticsApplied:false,actionAuthorized:false,
+    boundary:"Exact depth-2 structural context only. Both hops must be explicit source relations; no direct seed-to-hop2 relation, neighbour history, population widening, causal/influence/metric/economic propagation or action authorization is inferred."
+  };
+}
+
+function projectObjectDepth2({research,scope,directRelations=[]}={}){
+  const sourceKey=scope?.sourceKey||null,populationKey=scope?.key||null;
+  const entity=scope?.selection?.entity;
+  if(entity?.kind!=="object")return objectDepth2Empty("NOT_APPLICABLE",{sourceKey,populationKey});
+  const seedObjectId=text(entity.id);
+  const sourceObjects=arr(research?.source?.objects),sourceRelations=arr(research?.source?.relations);
+  const objectById=new Map(sourceObjects.map(row=>[idOf(row,"object_id"),row]).filter(([id])=>Boolean(id)));
+  if(!seedObjectId||!objectById.has(seedObjectId))return objectDepth2Empty("INVALID_SEED_OBJECT",{sourceKey,populationKey,seedObjectId});
+
+  const invalidRelations=[],unresolvedEndpointIds=new Set(),directNeighborIds=new Set(),firstHops=[];
+  const invalid=(row,reason,endpoints=[])=>{
+    invalidRelations.push({relationId:idOf(row,"relation_id")||null,reason});
+    endpoints.filter(Boolean).forEach(id=>unresolvedEndpointIds.add(id));
+  };
+  for(const row of arr(directRelations)){
+    const rel=relationSnapshot(row),left=rel.sourceObjectId,right=rel.targetObjectId;
+    if(!rel.id||!left||!right){invalid(row,!rel.id?"MISSING_RELATION_ID":"MISSING_ENDPOINT");continue;}
+    if(left!==seedObjectId&&right!==seedObjectId){invalid(row,"DIRECT_RELATION_DOES_NOT_TOUCH_SEED");continue;}
+    const hop1=left===seedObjectId?right:left;
+    if(!objectById.has(hop1)){invalid(row,"UNRESOLVED_DIRECT_ENDPOINT",[hop1]);continue;}
+    directNeighborIds.add(hop1);firstHops.push({hop1ObjectId:hop1,relation:rel});
+  }
+  if(invalidRelations.length)return objectDepth2Empty("INVALID_RELATION_ENDPOINTS",{sourceKey,populationKey,seedObjectId,directNeighborIds,unresolvedEndpointIds,invalidRelations});
+
+  const adjacency=new Map();
+  for(const row of sourceRelations){
+    const left=text(row?.source_object_id??row?.source_id),right=text(row?.target_object_id??row?.target_id);
+    if(left){if(!adjacency.has(left))adjacency.set(left,[]);adjacency.get(left).push(row);}
+    if(right&&right!==left){if(!adjacency.has(right))adjacency.set(right,[]);adjacency.get(right).push(row);}
+  }
+
+  const paths=[],pathKeys=new Set(),hop2ById=new Map();
+  for(const first of firstHops){
+    for(const row of adjacency.get(first.hop1ObjectId)||[]){
+      const rel=relationSnapshot(row),left=rel.sourceObjectId,right=rel.targetObjectId;
+      if(!rel.id||!left||!right){invalid(row,!rel.id?"MISSING_RELATION_ID":"MISSING_ENDPOINT");continue;}
+      if(rel.id===first.relation.id)continue;
+      if(left!==first.hop1ObjectId&&right!==first.hop1ObjectId)continue;
+      const hop2=left===first.hop1ObjectId?right:left;
+      if(!objectById.has(hop2)){invalid(row,"UNRESOLVED_SECOND_HOP_ENDPOINT",[hop2]);continue;}
+      if(hop2===seedObjectId||directNeighborIds.has(hop2))continue;
+      const key=JSON.stringify([first.hop1ObjectId,hop2,first.relation.id,rel.id]);
+      if(pathKeys.has(key))continue;pathKeys.add(key);
+      const hop1Object=objectSnapshot(objectById.get(first.hop1ObjectId));
+      const hop2Object=objectSnapshot(objectById.get(hop2));
+      paths.push({seedObjectId,hop1ObjectId:first.hop1ObjectId,hop2ObjectId:hop2,
+        hop1Object,hop2Object,firstRelation:structuredClone(first.relation),secondRelation:rel});
+      hop2ById.set(hop2,hop2Object);
+    }
+  }
+  if(invalidRelations.length)return objectDepth2Empty("INVALID_RELATION_ENDPOINTS",{sourceKey,populationKey,seedObjectId,directNeighborIds,unresolvedEndpointIds,invalidRelations});
+  paths.sort((a,b)=>a.hop2ObjectId.localeCompare(b.hop2ObjectId,"en")||a.hop1ObjectId.localeCompare(b.hop1ObjectId,"en")
+    ||a.firstRelation.id.localeCompare(b.firstRelation.id,"en")||a.secondRelation.id.localeCompare(b.secondRelation.id,"en"));
+  const hop2Objects=[...hop2ById.values()].sort((a,b)=>a.id.localeCompare(b.id,"en"));
+  return {
+    ...objectDepth2Empty(paths.length?"READY":"NO_DEPTH2_CONTEXT",{sourceKey,populationKey,seedObjectId,directNeighborIds}),
+    pathCount:paths.length,hop2ObjectCount:hop2Objects.length,paths,hop2Objects,
+  };
+}
+
+function projectRelationshipContext({research}={}){
+  if(!research?.source)return deepFreeze({
+    schema:"pirl.relationship-context.v1",status:"NO_DATASET",sourceKey:null,populationKey:null,
+    primaryCounts:{events:0,objects:0,actors:0,cases:0},relatedCounts:{objects:0,actors:0,cases:0,relations:0},
+    relationTypes:[],eventParticipation:{objectIds:[],actorIds:[]},samples:{objects:[],actors:[],cases:[],relations:[]},
+    objectDepth2:objectDepth2Empty("NO_DATASET"),
+    contextExpandsResearchPopulation:false,actionAuthorized:false,
+    boundary:"No active source; no relationship context is inferred."
+  });
+  const scope=research.scope;
+  if(!research.valid||!scope)return deepFreeze({
+    schema:"pirl.relationship-context.v1",status:"INVALID_SCOPE",sourceKey:scope?.sourceKey||null,populationKey:scope?.key||null,
+    scopeKind:scope?.selection?.kind||null,selection:structuredClone(scope?.selection||null),
+    primaryCounts:{events:0,objects:0,actors:0,cases:0},relatedCounts:{objects:0,actors:0,cases:0,relations:0},
+    relationTypes:[],eventParticipation:{objectIds:[],actorIds:[]},samples:{objects:[],actors:[],cases:[],relations:[]},
+    objectDepth2:objectDepth2Empty("INVALID_SCOPE",{sourceKey:scope?.sourceKey||null,populationKey:scope?.key||null}),
+    contextExpandsResearchPopulation:false,actionAuthorized:false,
+    boundary:"Invalid research scope; related records are not substituted from a broader source."
+  });
+
+  const records=scope.records||{},related=scope.related||{},membership=scope.relatedMembership||{};
+  const primaryEvents=arr(records.events);
+  const eventObjectIds=[...new Set(primaryEvents.flatMap(event=>arr(event.object_ids).map(text)).filter(Boolean))].sort();
+  const eventActorIds=[...new Set(primaryEvents.flatMap(event=>arr(event.actor_ids).map(text)).filter(Boolean))].sort();
+  const sourceObjectIds=new Set(arr(research.source.objects).map(row=>idOf(row,"object_id")));
+  const relationRows=arr(related.relations);
+  const typeCounts=new Map();
+  const unresolvedEndpointIds=new Set();
+  for(const row of relationRows){
+    const type=text(row.relation_type||row.type||"UNSPECIFIED")||"UNSPECIFIED";
+    typeCounts.set(type,(typeCounts.get(type)||0)+1);
+    for(const endpoint of [row.source_object_id??row.source_id,row.target_object_id??row.target_id].map(text).filter(Boolean))
+      if(!sourceObjectIds.has(endpoint))unresolvedEndpointIds.add(endpoint);
+  }
+  const relationTypes=[...typeCounts].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],"en"))
+    .map(([type,count])=>({type,count}));
+
+  const primaryCounts={
+    events:arr(records.events).length,objects:arr(records.objects).length,actors:arr(records.actors).length,cases:arr(records.cases).length,
+  };
+  const relatedCounts={
+    objects:arr(related.objects).length,actors:arr(related.actors).length,cases:arr(related.cases).length,relations:relationRows.length,
+  };
+  const status=Object.values(relatedCounts).some(Boolean)?"READY":"NO_RELATED_CONTEXT";
+  const samples={
+    objects:pairSamples(related.objects,membership.objects,"object_id",20,row=>({
+      type:text(row.object_type||row.type)||null,label:text(row.name||row.label)||null,
+    })),
+    actors:pairSamples(related.actors,membership.actors,"actor_id",20,row=>({
+      type:text(row.actor_type||row.type)||null,label:text(row.display_name||row.name||row.label)||null,
+    })),
+    cases:pairSamples(related.cases,membership.cases,"caseKey",20,row=>({
+      processId:text(row.processId||row.process_id)||null,role:text(row.role)||null,
+      directEventIds:arr(row.directEventIds).map(text),
+    })),
+    relations:pairSamples(relationRows,membership.relations,"relation_id",20,row=>({
+      type:text(row.relation_type||row.type)||"UNSPECIFIED",
+      sourceObjectId:text(row.source_object_id??row.source_id)||null,
+      targetObjectId:text(row.target_object_id??row.target_id)||null,
+    })),
+  };
+  const objectDepth2=projectObjectDepth2({research,scope,directRelations:relationRows});
+
+  return deepFreeze({
+    schema:"pirl.relationship-context.v1",status,
+    sourceKey:scope.sourceKey||null,populationKey:scope.key||null,scopeKind:scope.selection?.kind||null,
+    selection:structuredClone(scope.selection||null),
+    primaryCounts,relatedCounts,relationTypes,
+    eventParticipation:{objectIds:eventObjectIds,actorIds:eventActorIds},
+    samples,sampleLimit:20,objectDepth2,
+    unresolvedEndpointIds:[...unresolvedEndpointIds].sort(),
+    contextExpandsResearchPopulation:false,
+    outcomeAllocationPerformed:false,
+    causalInferencePerformed:false,
+    actionAuthorized:false,
+    boundary:"Related source records explain relationship context only. They do not add events or cases to the primary research population, allocate outcomes, or imply causal influence."
+  });
+}
+
+return Object.freeze({projectRelationshipContext});
+
+},
+
+"src/application/source-lens-depth.js":function(load){
+"use strict";
+const {deepFreeze}=load("src/core/data/immutability.js");
+const {projectSourceFieldDisposition}=load('src/application/source-field-disposition.js');
+const {METRIC_CATEGORY}=load("src/application/goal-norm-catalogue.js");
+const {DECISION_LENSES}=load("src/domain/decision-lenses.js");
+const arr=value=>Array.isArray(value)?value:[];
+const text=value=>value==null?"":String(value);
+const finite=value=>typeof value==="number"&&Number.isFinite(value);
+const round=(value,digits=9)=>Number.isFinite(value)?Number(value.toFixed(digits)):null;
+const idOf=(record,...keys)=>{for(const key of keys){const value=record?.[key];if(value!==undefined&&value!==null&&value!=="")return String(value);}return "";};
+const caseKey=record=>`${text(record?.process_id)}\u0000${text(record?.case_id)}`;
+const sample=(rows,key)=>rows.slice(0,20).map(row=>idOf(row,key,"id")).filter(Boolean);
+function proof({research,collection,rows,field,aggregation,eligible,observations,missing,boundary=null,extra={}}){
+ return {sourceKey:research.scope.sourceKey,populationKey:research.scope.key,collection,recordCount:rows.length,sampleIds:sample(rows,collection==="events"?"event_id":collection==="decisions"?"decision_id":"outcome_id"),sampleOnly:true,
+  query:`${aggregation} explicit ${field}; missing is not zero`,sourceFields:[field],eligibleRecords:eligible,observations,missing,boundary,...extra};
+}
+function fact({id,nl,en,value,unit,lensIds,measurementStatus,provenance,sourceUnit=null,semanticMetric=null,semanticMetricAliases=[],semanticCategory=null,mappingBasis=null,formulaReference=null,sourceSemanticRole=null}){
+ return {id,nl,en,value:value??null,unit,sourceUnit:sourceUnit||unit,lensIds,measurementLevel:"SOURCE_LENS_DIAGNOSTIC",status:value==null?"NOT_ESTABLISHED":"CALCULATED",measurementStatus,requiredEvidence:[],provenance,actionAuthorized:false,projected:false,
+  ...(semanticMetric?{semanticMetric,semanticMetricAliases:[...semanticMetricAliases],semanticCategory,mappingBasis,formulaReference,sourceSemanticRole:sourceSemanticRole||"GOAL_INDEPENDENT_SOURCE_DIAGNOSTIC"}:{}),};
+}
+function numeric(rows,getter){
+ const values=[],used=[];
+ for(const row of rows){const value=getter(row);if(finite(value)){values.push(value);used.push(row);}}
+ return {values,used,observations:values.length,missing:Math.max(0,rows.length-values.length)};
+}
+function sumFact(spec){
+ const n=numeric(spec.rows,spec.getter),value=n.observations?round(n.values.reduce((a,b)=>a+b,0),spec.digits??9):null;
+ return fact({...spec,value,measurementStatus:value==null?"NOT_ESTABLISHED":n.missing?"PARTIAL":"RECORDED",
+  provenance:proof({...spec,rows:n.used,eligible:spec.rows.length,observations:n.observations,missing:n.missing})});
+}
+function averageFact(spec){
+ const n=numeric(spec.rows,spec.getter),value=n.observations?round(n.values.reduce((a,b)=>a+b,0)/n.observations,spec.digits??9):null;
+ return fact({...spec,value,measurementStatus:value==null?"NOT_ESTABLISHED":n.missing?"PARTIAL":"RECORDED",
+  provenance:proof({...spec,rows:n.used,eligible:spec.rows.length,observations:n.observations,missing:n.missing})});
+}
+function rateFact(spec){
+ const values=[],used=[];for(const row of spec.rows){const value=spec.getter(row);if(typeof value==="boolean"){values.push(value);used.push(row);}}
+ const obs=values.length,missing=Math.max(0,spec.rows.length-obs),value=obs?round(values.filter(Boolean).length/obs,9):null;
+ return fact({...spec,value,measurementStatus:value==null?"NOT_ESTABLISHED":missing?"PARTIAL":"RECORDED",
+  provenance:proof({...spec,rows:used,eligible:spec.rows.length,observations:obs,missing,extra:{numerator:values.filter(Boolean).length,denominator:obs,...(spec.extra||{})}})});
+}
+function maxTwoRateFact(spec){
+ const n=numeric(spec.rows,spec.getter),numerator=n.values.filter(value=>value<=2).length,value=n.observations?round(numerator/n.observations,9):null;
+ return fact({...spec,value,measurementStatus:value==null?"NOT_ESTABLISHED":n.missing?"PARTIAL":"RECORDED",
+  provenance:proof({...spec,rows:n.used,eligible:spec.rows.length,observations:n.observations,missing:n.missing,extra:{numerator,denominator:n.observations,...(spec.extra||{})}})});
+}
+const HYBRID_RULES=Object.freeze([
+ {id:"depth_operations_commitment_met",metric:"commitment_met_rate",field:"commitment_met",mode:"boolean",nl:"Geregistreerde commitment-naleving",en:"Recorded commitment-met rate",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_CAUSAL"},
+ {id:"depth_operations_first_time_right",metric:"first_time_right_rate",aliases:["first_time_right"],field:"first_time_right",mode:"boolean",nl:"Geregistreerde first-time-right",en:"Recorded first-time-right rate",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_CAUSAL"},
+ {id:"depth_operations_straight_through",metric:"stp_rate",field:"straight_through",mode:"boolean",nl:"Geregistreerde straight-through-uitvoering",en:"Recorded straight-through rate",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_AUTOMATION_EFFECT"},
+ {id:"depth_operations_payment_success",metric:"payment_success_rate",field:"payment_success",mode:"boolean",nl:"Geregistreerd betaalsucces",en:"Recorded payment-success rate",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_CAUSAL"},
+ {id:"depth_operations_max_two_handovers",metric:"cases_with_max_two_handovers_rate",field:"handover_count",mode:"max2",nl:"Uitvoeringen met maximaal twee handovers",en:"Executions with at most two handovers",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_COORDINATION_CAUSALITY"},
+ {id:"depth_risk_material_alert_detection",metric:"material_alert_detection_rate",field:"material_alert_detected",mode:"boolean",nl:"Geregistreerde material-alert-detectie",en:"Recorded material-alert detection rate",boundary:"OBSERVED_SOURCE_SIGNAL_NOT_RISK_REDUCTION"},
+ {id:"depth_customer_complaint_sla",metric:"complaint_sla_rate",field:"complaint_sla_met",mode:"boolean",nl:"Geregistreerde klacht-SLA",en:"Recorded complaint-SLA rate",boundary:"OBSERVED_COMPLETED_PROCESS_RESULT_NOT_CUSTOMER_EFFECT"},
+ {id:"depth_customer_acknowledged_within_4h",metric:"complaints_acknowledged_within_4h_rate",field:"acknowledged_within_4h",mode:"complaint_boolean",nl:"Klachten binnen vier uur bevestigd",en:"Complaints acknowledged within four hours",boundary:"OBSERVED_CLOSED_COMPLAINT_RESULT_NOT_CUSTOMER_EFFECT"},
+ {id:"depth_compliance_responsible_approval",metric:"responsible_approval_rate",field:"responsible_approval",mode:"boolean",nl:"Geregistreerde verantwoordelijke goedkeuring",en:"Recorded responsible-approval rate",boundary:"OBSERVED_SOURCE_RESULT_NOT_COMPLIANCE_VERDICT"},
+ {id:"depth_compliance_critical_lineage",metric:"critical_lineage_completeness",field:"critical_lineage_complete",mode:"boolean",nl:"Geregistreerde kritieke lineage-volledigheid",en:"Recorded critical-lineage completeness",boundary:"OBSERVED_SOURCE_RESULT_NOT_COMPLIANCE_VERDICT"},
+]);
+function lensIdsForMetric(metric){const category=METRIC_CATEGORY[metric];return {category,lensIds:category?DECISION_LENSES.filter(lens=>lens.categories.includes(category)).map(lens=>lens.id):[]};}
+function observedProcessIds(research){
+ const rows=[...arr(research?.scope?.records?.events),...arr(research?.scope?.records?.cases),...arr(research?.scope?.records?.outcomes)];
+ return new Set(rows.map(row=>text(row?.process_id)).filter(Boolean));
+}
+function goalMeasurementSamePopulation(goalFact,research){
+ if(!finite(goalFact?.value))return false;
+ const scopeRef=text(goalFact?.subject?.scopeRef);if(!scopeRef)return true;
+ const processIds=new Set(arr(research?.source?.processes).map(p=>idOf(p,"process_id","id")).filter(Boolean));
+ if(!processIds.has(scopeRef))return true;
+ const observed=observedProcessIds(research);return observed.size===1&&observed.has(scopeRef);
+}
+function deduplicateHybridFacts(hybridFacts,goalFacts,research){
+ const measured=arr(goalFacts).filter(f=>finite(f?.value)&&text(f?.metric));const kept=[],deduplicated=[];
+ for(const sourceFact of hybridFacts){
+  const aliases=new Set([sourceFact.semanticMetric,...arr(sourceFact.semanticMetricAliases)].filter(Boolean));
+  const matches=measured.filter(goalFact=>aliases.has(text(goalFact.metric))&&goalMeasurementSamePopulation(goalFact,research));
+  if(matches.length){deduplicated.push({factId:sourceFact.id,semanticMetric:sourceFact.semanticMetric,goalFactIds:matches.map(f=>f.id),reason:"MEASURED_GOAL_FACT_SAME_SEMANTIC_AND_RESEARCH_POPULATION"});continue;}
+  kept.push(sourceFact);
+ }
+ return {facts:kept,deduplicated};
+}
+function hybridFacts({research,outcomes,process,goalFacts}){
+ const closedKeys=new Set(outcomes.filter(o=>text(o.outcome_type||o.type).toUpperCase()==="PROCESS"&&text(o.status).toUpperCase()!=="OPEN").map(caseKey));
+ const complaint=outcomes.filter(o=>text(o.outcome_type||o.type).toUpperCase()==="COMPLAINT"&&closedKeys.has(caseKey(o)));
+ const candidates=[],unsupported=[];
+ for(const rule of HYBRID_RULES){
+  const mapping=lensIdsForMetric(rule.metric);
+  if(!mapping.category||!mapping.lensIds.length){unsupported.push({metric:rule.metric,field:rule.field,reason:"NO_EXISTING_CATEGORY_TO_BOARD_LENS_MAPPING"});continue;}
+  const rows=rule.mode==="complaint_boolean"?complaint:process,base={id:rule.id,nl:rule.nl,en:rule.en,unit:"ratio",lensIds:mapping.lensIds,research,collection:"outcomes",rows,field:`outcomes.measures.${rule.field}`,aggregation:rule.mode==="max2"?"RATE <= 2":"RATE TRUE",getter:o=>o.measures?.[rule.field],boundary:rule.boundary,semanticMetric:rule.metric,semanticMetricAliases:rule.aliases||[],semanticCategory:mapping.category,mappingBasis:"EXISTING_METRIC_CATEGORY",formulaReference:"src/application/period-goal-measurement.js",sourceSemanticRole:"GOAL_INDEPENDENT_SOURCE_DIAGNOSTIC"};
+  const sourceFact=rule.mode==="max2"?maxTwoRateFact(base):rateFact(base);
+  if(sourceFact.provenance.observations>0)candidates.push(sourceFact);
+ }
+ const dedupe=deduplicateHybridFacts(candidates,goalFacts,research);
+ return {facts:dedupe.facts,deduplicatedByGoalFacts:dedupe.deduplicated,unsupportedMapping:unsupported,candidateFactCount:candidates.length};
+}
+function projectSourceLensDepth({research,context={},included={ip:true,behavior:true,value:true},goalFacts=[],typedFacts=null}={}){
+ if(!research?.valid||!research.source)return deepFreeze({schema:"pirl.source-lens-depth.v1",status:"INVALID_SCOPE",facts:[]});
+ if(context?.focus)return deepFreeze({schema:"pirl.source-lens-depth.v1",status:"WITHHELD_FOCUS_NOT_ALLOCATION",facts:[],scopeKey:research.scope.key,sourceKey:research.scope.sourceKey,fieldDispositions:projectSourceFieldDisposition({research,context,included,typedFacts}),boundaries:["Population-level source diagnostics are withheld while a focus is active; focus is not economic or outcome allocation.","Missing values are not zero."]});
+ const r=research.scope.records||{},outcomes=arr(r.outcomes),events=arr(r.events),decisions=arr(r.decisions);
+ const financial=outcomes.filter(o=>text(o.outcome_type||o.type).toUpperCase()==="FINANCIAL");
+ const process=outcomes.filter(o=>text(o.outcome_type||o.type).toUpperCase()==="PROCESS"&&text(o.status).toUpperCase()==="COMPLETED");
+ const satisfaction=outcomes.filter(o=>text(o.outcome_type||o.type).toUpperCase()==="SATISFACTION");
+ const facts=[];let hybrid={facts:[],deduplicatedByGoalFacts:[],unsupportedMapping:[],candidateFactCount:0};
+ if(included.value===true){
+  facts.push(
+   sumFact({id:"depth_finance_revenue",nl:"Gerealiseerde opbrengst in bronuitkomsten",en:"Realized revenue in source outcomes",unit:"EUR",lensIds:["finance"],research,collection:"outcomes",rows:financial,field:"outcomes.measures.realized_revenue_eur",aggregation:"SUM",getter:o=>o.measures?.realized_revenue_eur,boundary:"RELATED_FINANCIAL_OUTCOME_TOTAL"}),
+   sumFact({id:"depth_finance_direct_cost",nl:"Directe proceskosten in bronuitkomsten",en:"Direct process cost in source outcomes",unit:"EUR",lensIds:["finance"],research,collection:"outcomes",rows:financial,field:"outcomes.measures.direct_process_cost_eur",aggregation:"SUM",getter:o=>o.measures?.direct_process_cost_eur,boundary:"RELATED_FINANCIAL_OUTCOME_TOTAL"}),
+   sumFact({id:"depth_finance_margin",nl:"Casebijdragemarge in bronuitkomsten",en:"Case contribution margin in source outcomes",unit:"EUR",lensIds:["finance"],research,collection:"outcomes",rows:financial,field:"outcomes.measures.case_contribution_margin_eur",aggregation:"SUM",getter:o=>o.measures?.case_contribution_margin_eur,boundary:"RELATED_FINANCIAL_OUTCOME_TOTAL"}),
+   sumFact({id:"depth_risk_expected_loss",nl:"Expected loss in financiële bronuitkomsten",en:"Expected loss in financial source outcomes",unit:"EUR",lensIds:["risk"],research,collection:"outcomes",rows:financial,field:"outcomes.measures.expected_loss_eur",aggregation:"SUM",getter:o=>o.measures?.expected_loss_eur,boundary:"EXPECTED_LOSS_SOURCE_MEASURE_NOT_REALIZED_COST"}),
+   sumFact({id:"depth_risk_value_at_risk",nl:"Value at risk in financiële bronuitkomsten",en:"Value at risk in financial source outcomes",unit:"EUR",lensIds:["risk"],research,collection:"outcomes",rows:financial,field:"outcomes.measures.value_at_risk_eur",aggregation:"SUM",getter:o=>o.measures?.value_at_risk_eur,boundary:"SOURCE_EXPOSURE_MEASURE"}),
+   averageFact({id:"depth_customer_satisfaction",nl:"Gemiddelde geregistreerde tevredenheid",en:"Average recorded satisfaction",unit:"score",lensIds:["customer"],research,collection:"outcomes",rows:satisfaction,field:"outcomes.measures.satisfaction_score",aggregation:"AVG",getter:o=>o.measures?.satisfaction_score,boundary:"SATISFACTION_OUTCOME_RECORDS_NOT_UNIQUE_CUSTOMERS"}),
+   averageFact({id:"depth_customer_contacts",nl:"Gemiddeld geregistreerde klantcontacten",en:"Average recorded customer contacts",unit:"count",lensIds:["customer"],research,collection:"outcomes",rows:process,field:"outcomes.measures.customer_contacts",aggregation:"AVG",getter:o=>o.measures?.customer_contacts,boundary:"COMPLETED_PROCESS_OUTCOMES"}),
+   rateFact({id:"depth_resilience_recovery_sla",nl:"Geregistreerde recovery-SLA",en:"Recorded recovery SLA",unit:"ratio",lensIds:["resilience"],research,collection:"outcomes",rows:process,field:"outcomes.measures.recovery_sla_met",aggregation:"RATE",getter:o=>o.measures?.recovery_sla_met,boundary:"OBSERVED_PROCESS_RESULT_NOT_RECOVERABILITY_MODEL"})
+  );
+ }
+ if(included.behavior===true){
+  facts.push(
+   sumFact({id:"depth_operations_processing_time",nl:"Geregistreerde verwerkingstijd",en:"Recorded processing time",unit:"hours",sourceUnit:"seconds",lensIds:["operations"],research,collection:"events",rows:events,field:"events.measures.processing_time_seconds",aggregation:"SUM/3600",getter:e=>finite(e.measures?.processing_time_seconds)?e.measures.processing_time_seconds/3600:null,boundary:"DIRECT_EVENT_TIME"}),
+   sumFact({id:"depth_operations_waiting_time",nl:"Geregistreerde wachttijd",en:"Recorded waiting time",unit:"hours",sourceUnit:"seconds",lensIds:["operations"],research,collection:"events",rows:events,field:"events.measures.waiting_time_seconds",aggregation:"SUM/3600",getter:e=>finite(e.measures?.waiting_time_seconds)?e.measures.waiting_time_seconds/3600:null,boundary:"DIRECT_EVENT_TIME"}),
+   averageFact({id:"depth_operations_cycle_time",nl:"Gemiddelde cyclustijd afgeronde uitvoeringen",en:"Average cycle time of completed executions",unit:"hours",lensIds:["operations"],research,collection:"outcomes",rows:process,field:"outcomes.measures.cycle_time_hours",aggregation:"AVG",getter:o=>o.measures?.cycle_time_hours,boundary:"COMPLETED_PROCESS_OUTCOMES"}),
+   sumFact({id:"depth_operations_rework",nl:"Geregistreerde herbewerkingen",en:"Recorded rework count",unit:"count",lensIds:["operations"],research,collection:"outcomes",rows:process,field:"outcomes.measures.rework_count",aggregation:"SUM",getter:o=>o.measures?.rework_count,boundary:"COMPLETED_PROCESS_OUTCOMES"})
+  );
+ }
+ if(included.ip===true){
+  const evidenceIds=new Set(arr(research.source.evidence).map(e=>idOf(e,"evidence_id","id")).filter(Boolean));
+  const traceRows=decisions.filter(d=>Array.isArray(d.evidence_ids));
+  const traceValues=traceRows.map(d=>d.evidence_ids.length>0&&d.evidence_ids.every(id=>evidenceIds.has(String(id))));
+  const trace=traceValues.length?round(traceValues.filter(Boolean).length/traceValues.length,9):null;
+  facts.push(fact({id:"depth_compliance_evidence_traceability",nl:"Beslissingen met herleidbare evidence",en:"Decisions with traceable evidence",value:trace,unit:"ratio",lensIds:["compliance"],measurementStatus:trace==null?"NOT_ESTABLISHED":traceRows.length<decisions.length?"PARTIAL":"RECORDED",
+   provenance:proof({research,collection:"decisions",rows:traceRows,field:"decisions.evidence_ids -> evidence.evidence_id",aggregation:"RATE",eligible:decisions.length,observations:traceRows.length,missing:decisions.length-traceRows.length,extra:{numerator:traceValues.filter(Boolean).length,denominator:traceValues.length,boundary:"TRACEABILITY_NOT_COMPLIANCE_VERDICT"}})}));
+  const authRows=decisions.filter(d=>text(d.disposition)&&text(d.execution_authorization));
+  const unauthorized=authRows.filter(d=>text(d.disposition)==="READY"&&text(d.execution_authorization)!=="AUTHORIZED").length;
+  facts.push(fact({id:"depth_compliance_unauthorized_ready",nl:"READY-beslissingen zonder uitvoeringsautorisatie",en:"READY decisions without execution authorization",value:authRows.length?unauthorized:null,unit:"count",lensIds:["compliance"],measurementStatus:authRows.length?authRows.length<decisions.length?"PARTIAL":"RECORDED":"NOT_ESTABLISHED",
+   provenance:proof({research,collection:"decisions",rows:authRows,field:"decisions.disposition + decisions.execution_authorization",aggregation:"COUNT",eligible:decisions.length,observations:authRows.length,missing:decisions.length-authRows.length,extra:{boundary:"AUTHORIZATION_RECORD_CHECK_NOT_COMPLIANCE_VERDICT"}})}));
+ }
+ if(included.behavior===true&&included.value===true){hybrid=hybridFacts({research,outcomes,process,goalFacts});facts.push(...hybrid.facts);}
+ const decisionProvenanceOutcomeCount=outcomes.filter(o=>finite(o.measures?.decision_provenance_rate)).length;
+ const semanticDeduplications=decisionProvenanceOutcomeCount&&included.ip===true&&included.value===true?[{semanticMetric:"decision_provenance_rate",sourceField:"outcomes.measures.decision_provenance_rate",keptFactId:"depth_compliance_evidence_traceability",reason:"DIRECT_DECISION_TRACEABILITY_DIAGNOSTIC_ALREADY_PRESENT",observations:decisionProvenanceOutcomeCount}]:[];
+ return deepFreeze({schema:"pirl.source-lens-depth.v1",status:"READY",facts,scopeKey:research.scope.key,sourceKey:research.scope.sourceKey,
+  fieldDispositions:projectSourceFieldDisposition({research,context,included,typedFacts}),
+  hybridPolicy:{exclusionListRole:"RAW_FIELDS_NOT_READ_AS_SEPARATE_NUMERIC_METRICS_SEE_FIELD_DISPOSITIONS",id:"GEN02_R02_C_HYBRID_DEDUPLICATED",candidateFactCount:hybrid.candidateFactCount,visibleFactCount:hybrid.facts.length,deduplicatedByGoalFacts:hybrid.deduplicatedByGoalFacts,semanticDeduplications,unsupportedMapping:hybrid.unsupportedMapping,uncontractedFieldsExcluded:["outcomes.measures.allocated_subscription_revenue_eur","outcomes.measures.revenue_at_risk_eur","events.measures.customer_effort_seconds","events.measures.external_effort_seconds","outcomes.measures.business_successful","outcomes.measures.control_successful","outcomes.measures.safe_refusal","outcomes.measures.escalated"]},
+  boundaries:["No causal inference.","No cross-level financial addition.","No outcome allocation to resources.","No recoverability/capacity inference.","Missing values are not zero.","Hybrid source diagnostics reuse only existing metric category and aggregation semantics; measured goal facts on the same research population suppress duplicate presentation."]});
+}
+return Object.freeze({projectSourceLensDepth,HYBRID_RULES});
+
+},
+
+
+"src/application/local-rework-scenario.js":function(load){
+"use strict";
+const {deepFreeze}=load("src/core/data/immutability.js");
+const {caseOutcomeBinding,researchCaseKey}=load("src/application/analysis-research-scope.js");
+const {buildGoalNormCatalogue}=load("src/application/goal-norm-catalogue.js");
+const MODEL_TYPE="LOCAL_REWORK_TWO_GOAL_V1";
+const MODEL_ID="M-REWORK-CYCLE-FTR-LOCAL-001";
+const VERSION="1.0";
+const finite=x=>typeof x==="number"&&Number.isFinite(x);
+const list=x=>Array.isArray(x)?x:[];
+const number=s=>typeof s==="string"&&/^(?:0|[1-9]\d*)(?:[.,]\d+)?$/.test(s.trim())?Number(s.trim().replace(",",".")):null;
+function isoMillis(value){
+ if(typeof value!=="string")return null;
+ const match=/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2}))?$/.exec(value);
+ if(!match)return null;
+ const [,year,month,day,hour,minute,second,,zone]=match;
+ const calendar=new Date(Date.UTC(Number(year),Number(month)-1,Number(day)));
+ if(calendar.getUTCFullYear()!==Number(year)||calendar.getUTCMonth()+1!==Number(month)||calendar.getUTCDate()!==Number(day))return null;
+ if(hour!==undefined&&(Number(hour)>23||Number(minute)>59||Number(second)>59))return null;
+ if(zone&&zone!=="Z"&&(Number(zone.slice(1,3))>23||Number(zone.slice(4))>59))return null;
+ const parsed=Date.parse(value);
+ return Number.isFinite(parsed)?parsed:null;
+}
+function validModel(model,research,id){
+ const scope=model?.application_scope||{};
+ return model?.schema==="pirl.simulation-model.v1"&&model.model_type===MODEL_TYPE&&model.simulation_model_id===MODEL_ID&&model.model_version===VERSION&&
+ model.epistemic_status==="HYPOTHETICAL_CONDITIONAL_NOT_EMPIRICAL"&&model.composition_rule==="SINGLE_INTERVENTION_ONLY"&&
+ list(model.intervention_ids).length===1&&model.intervention_ids[0]===id&&
+ list(scope.bundle_ids).includes(research?.referenceModel?.bundleId)&&
+ list(scope.process_ids).includes(research?.scope?.selection?.processId)&&list(scope.scope_kinds).includes("process")&&
+ model.parameter_provenance?.source_type==="USER_CONFIRMED_ASSUMPTION";
+}
+function cohort(research){
+ const cases=list(research?.model?.cases),pid=research?.scope?.selection?.processId;
+ if(!research?.valid||research.scope.selection.kind!=="process"||research.scope.selection.entity||!pid||!cases.length)return {status:"PROCESS_POPULATION_REQUIRED"};
+ const keys=new Set(),ids=new Set(),scopedIds=list(research.scope.records.outcomes).map(o=>o.outcome_id),scopedSet=new Set(scopedIds);if(scopedIds.length!==scopedSet.size)return {status:"DUPLICATE_OUTCOME_ID"};let T=0,F=0,R=0,minEligible=Infinity;const sourceCases=[];
+ for(const c of cases){
+  const key=researchCaseKey(c);if(keys.has(key)||c.process_id!==pid||c.case_status!=="COMPLETED"||c.scope_membership?.completeInActiveSource!==true||c.scope_membership?.completeInObservedPeriod===false)return {status:"INCOMPLETE_OR_DUPLICATE_COHORT"};keys.add(key);
+  const binding=caseOutcomeBinding(research.referenceModel,c,"PROCESS"),o=binding.record;
+  if(!o||!scopedSet.has(o.outcome_id)||ids.has(o.outcome_id))return {status:"MISSING_OR_AMBIGUOUS_OUTCOME"};ids.add(o.outcome_id);
+  const t=o.measures?.cycle_time_hours,f=o.measures?.first_time_right,r=o.measures?.rework_count;
+  if(!finite(t)||t<0||typeof f!=="boolean"||!Number.isInteger(r)||r<0||r>1||f&&r!==0)return {status:"INVALID_SOURCE_MEASUREMENT"};
+  T+=t;F+=Number(f);R+=r;if(r===1)minEligible=Math.min(minEligible,t);
+  sourceCases.push({caseKey:key,outcomeId:o.outcome_id,cycleHours:t,firstTimeRight:f,eligibleRework:r===1});
+ }
+ if(!Number.isFinite(T)||F>cases.length||R>cases.length-F)return {status:"INVALID_COHORT_TOTAL"};
+ return {status:"READY",N:cases.length,T,F,R,minEligible:R?minEligible:null,sourceCases};
+}
+function exactGoals(research,context,horizon){
+ const catalogue=buildGoalNormCatalogue({goals:research.source.goals,norms:research.source.norms});
+ const selected=[context?.reference?.primary,...list(context?.reference?.comparisons)].filter(Boolean);
+ const result=[];for(const metric of ["cycle_time_hours","first_time_right"]){
+  const found=selected.map(ref=>{const matches=catalogue.items.filter(x=>x.kind===ref.kind&&x.id===ref.id&&x.key===ref.catalogueKey&&x.provenance.sourceId===ref.source?.sourceId);return matches.length===1?matches[0]:null;}).filter(x=>x?.metric===metric);
+  if(found.length!==1){result.push({metric,status:"EXACT_GOAL_REFERENCE_REQUIRED"});continue;}
+  const g=found[0],p=g.measurementPeriod,v=g.validity,scope=g.scope,target=g.target;
+  let reason=null;
+  if(scope.scope!=="PROCESS"||scope.scopeRef!==research.scope.selection.processId)reason="PROCESS_TARGET_SCOPE_MISMATCH";
+  else if(isoMillis(p?.start)===null||isoMillis(p?.endExclusive)===null||isoMillis(p.start)>=isoMillis(p.endExclusive)||isoMillis(p.start)!==isoMillis(horizon.startInclusive)||isoMillis(p.endExclusive)!==isoMillis(horizon.endExclusive))reason="TARGET_PERIOD_NOT_SIMULATION_HORIZON";
+  else if(isoMillis(v?.validFrom)===null||isoMillis(v?.validUntil)===null||isoMillis(v.validFrom)>isoMillis(v.validUntil)||isoMillis(v.validFrom)>isoMillis(horizon.startInclusive)||isoMillis(v.validUntil)<isoMillis(horizon.endExclusive)-1)reason="TARGET_VALIDITY_NOT_FULL_HORIZON";
+  else if(target?.unit!==(metric==="cycle_time_hours"?"hours":"ratio")||!finite(target.value)||target.operator!==(metric==="cycle_time_hours"?"<=":">="))reason="TARGET_METRIC_UNIT_OR_OPERATOR_MISMATCH";
+  result.push({metric,status:reason?"NOT_COMPARABLE":"READY",reason,key:g.key,id:g.id,kind:g.kind,source:g.provenance,scope,populationKey:research.scope.key,measurementPeriod:p,validity:v,target});
+ }
+ return result;
+}
+function evaluate({research,model,interventionId,context,draft}){
+ const errors=[];if(!validModel(model,research,interventionId))errors.push("MODEL_OR_APPLICABILITY_INVALID");
+ const basis=cohort(research);if(basis.status!=="READY")errors.push(basis.status);
+ const obs=context?.observedPeriod,h={startInclusive:draft?.horizonStart,endExclusive:draft?.horizonEnd};
+ if(isoMillis(h.startInclusive)===null||isoMillis(h.endExclusive)===null||isoMillis(h.startInclusive)>=isoMillis(h.endExclusive)||isoMillis(obs?.endExclusive)===null||isoMillis(h.startInclusive)<isoMillis(obs.endExclusive))errors.push("INVALID_FUTURE_HORIZON");
+ if(draft?.sameWorkload!==true||typeof draft?.basisNote!=="string"||draft.basisNote.trim().length<8)errors.push("WORKLOAD_AND_MIX_NOT_CONFIRMED");
+ if(typeof draft?.hypothesis!=="string"||draft.hypothesis.trim().length<8)errors.push("HUMAN_HYPOTHESIS_REQUIRED");
+ const q=number(draft?.q),d=number(draft?.d);
+ if(!finite(q)||q<0||q>1||draft?.qConfirmed!==true)errors.push("Q_ASSUMPTION_INVALID_OR_UNCONFIRMED");
+ if(draft?.d!==""&&(!finite(d)||d<0||draft?.dConfirmed!==true))errors.push("D_ASSUMPTION_INVALID_OR_UNCONFIRMED");
+ if(finite(d)&&basis.status==="READY"&&basis.R>0&&d>basis.minEligible)errors.push("D_EXCEEDS_ELIGIBLE_CYCLE");
+ const goals=errors.includes("INVALID_FUTURE_HORIZON")?[]:exactGoals(research,context,h);
+ const common=errors.length>0,validD=finite(d)&&d>=0&&draft.dConfirmed===true;
+ const base=basis.status==="READY"?{cycleHours:basis.T/basis.N,ftrRate:basis.F/basis.N}:null;
+ let cycle=null,ftr=null,A=null;if(!common&&base){A=q*basis.R;ftr=(basis.F+A)/basis.N;if(validD)cycle=(basis.T-A*d)/basis.N;
+  if(!finite(ftr)||ftr<0||ftr>1||validD&&(!finite(cycle)||cycle<0))errors.push("PROJECTED_RESULT_OUT_OF_BOUNDS");}
+ const blocked=errors.length>0;
+ const outcomes=[{metric:"cycle_time_hours",unit:"hours",baseline:base?.cycleHours??null,scenario:blocked||!validD?null:cycle,status:blocked?"NOT_CALCULABLE":!validD?"UNKNOWN_D_ASSUMPTION":"CONDITIONAL"},
+ {metric:"first_time_right",unit:"ratio",baseline:base?.ftrRate??null,scenario:blocked?null:ftr,status:blocked?"NOT_CALCULABLE":"CONDITIONAL"}].map(o=>{
+  const goal=goals.find(g=>g.metric===o.metric)||{metric:o.metric,status:"EXACT_GOAL_REFERENCE_REQUIRED"};
+  return {...o,goal,comparison:o.status!=="CONDITIONAL"||goal.status!=="READY"?"NOT_COMPARABLE":goal.target.operator==="<="?o.scenario<=goal.target.value?"PROJECTED_MEETS_REFERENCE":"PROJECTED_OUTSIDE_REFERENCE":o.scenario>=goal.target.value?"PROJECTED_MEETS_REFERENCE":"PROJECTED_OUTSIDE_REFERENCE"};
+ });
+ return deepFreeze({schema:"pirl.local-rework-two-goal-result.v1",modelId:MODEL_ID,modelVersion:VERSION,sourceKey:research?.scope?.sourceKey||null,populationKey:research?.scope?.key||null,sourceIdentity:research?.snapshot?.source||null,sourceBundleId:research?.source?.bundleId||null,observedPeriod:obs||null,simulationHorizon:h,cohort:basis,assumptions:{q:finite(q)?q:null,d:validD?d:null,qConfirmed:draft?.qConfirmed===true,dConfirmed:draft?.dConfirmed===true,sameWorkload:draft?.sameWorkload===true,basisNote:draft?.basisNote||"",hypothesis:draft?.hypothesis||"",parameterProvenance:model?.parameter_provenance||null},avoidedExpected:blocked?null:A,noChange:base,outcomes,errors,scenarioOnly:true,forecastValidated:false,ranking:null,actionAuthorized:false,twoGoalComparable:outcomes.every(o=>o.comparison!=="NOT_COMPARABLE")});
+}
+return Object.freeze({MODEL_TYPE,MODEL_ID,VERSION,validModel,cohort,exactGoals,evaluate});
+
+},
+"src/presentation/evidence-file-delivery.js":function(load){
+"use strict";
+const {sha256Portable}=load("src/core/data/sha256-portable.js");
+
+// Transport only: no import, runtime restore or acceptance verdict.
+function createEvidenceFileDelivery({windowRef=window, contextToken}={}) {
+  if (typeof contextToken !== "function") throw new TypeError("Context reader required");
+  const doc=windowRef.document;
+  let current=null, objectURL=null, sharing=false;
+  const stale=()=>!current || contextToken()!==current.contextToken;
+  function clearURL(){if(objectURL){windowRef.URL.revokeObjectURL(objectURL);objectURL=null;}}
+  function prepare({value,filename,exportedAt}){
+    if(sharing) throw new Error("Rond het deelvenster eerst af.");
+    if(!value || !filename?.endsWith(".json")) throw new TypeError("Ongeldig bewijspakket");
+    clearURL();
+    const bytes=new TextEncoder().encode(JSON.stringify(value,null,2)+"\n");
+    current=Object.freeze({bytes,filename,exportedAt,sha256:sha256Portable(bytes),contextToken:contextToken(),
+      sourceKey:value.researchScope?.sourceKey??null,scopeKey:value.researchScope?.key??null,
+      artifactRefs:Object.freeze({simulation:value.artifacts?.simulation?.record?.modelId??null,
+        advice:!!value.artifacts?.advice?.current,review:!!value.artifacts?.researcherReview?.current})});
+    return describe();
+  }
+  function describe(){return current?{filename:current.filename,exportedAt:current.exportedAt,bytes:current.bytes.byteLength,
+    sha256:current.sha256,sourceKey:current.sourceKey,scopeKey:current.scopeKey,artifactRefs:current.artifactRefs,
+    stale:stale(),savedConfirmed:false}:null;}
+  function requireCurrent(){if(!current)throw new Error("Maak eerst een exportmoment.");if(stale())throw new Error("Exportmoment is niet actueel; bereid opnieuw voor.");}
+  function file(name=current.filename,type="application/json"){
+    return typeof windowRef.File==="function"?new windowRef.File([current.bytes],name,{type}):null;
+  }
+  function canShare(){try{return !stale() && !!file() && typeof windowRef.navigator?.share==="function" &&
+    typeof windowRef.navigator?.canShare==="function" && windowRef.navigator.canShare({files:[file()]});}catch(_){return false;}}
+  function download({alternative=false}={}){
+    requireCurrent();
+    const name=alternative?current.filename.replace(/\.json$/i,".json.txt"):current.filename;
+    const type=alternative?"text/plain;charset=utf-8":"application/json";
+    const url=windowRef.URL.createObjectURL(new windowRef.Blob([current.bytes],{type}));
+    if(objectURL)clearURL();objectURL=url;
+    const anchor=doc.createElement("a");anchor.href=url;anchor.download=name;anchor.target="_blank";anchor.rel="noopener noreferrer";anchor.hidden=true;
+    doc.body.append(anchor);
+    try{anchor.click();}finally{anchor.remove();}
+    return {status:alternative?"ALTERNATIVE_TEXT_REQUESTED":"DOWNLOAD_REQUESTED",filename:name,savedConfirmed:false,...describe()};
+  }
+  async function share(){
+    requireCurrent();
+    if(!canShare())return {status:"SHARE_UNAVAILABLE",savedConfirmed:false};
+    if(sharing)return {status:"SHARE_BUSY",savedConfirmed:false};
+    sharing=true;
+    try{await windowRef.navigator.share({files:[file()]});return {status:"SHARE_COMPLETED",savedConfirmed:false,...describe()};}
+    catch(error){return {status:error?.name==="AbortError"?"CANCELLED":"SHARE_FAILED",message:String(error?.message||error),savedConfirmed:false};}
+    finally{sharing=false;}
+  }
+  async function readback(selected){
+    if(!current)return {status:"NO_PREPARED_EXPORT",verified:false};
+    if(stale())return {status:"STALE_CONTEXT",verified:false};
+    if(!selected)return {status:"CANCELLED",verified:false};
+    if(!/\.json$/i.test(selected.name||"") || selected.name!==current.filename)return {status:"WRONG_FILE",verified:false};
+    try{
+      const bytes=new Uint8Array(await selected.arrayBuffer());
+      if(stale())return {status:"STALE_CONTEXT",verified:false};
+      const actualSha256=sha256Portable(bytes);
+      if(bytes.byteLength!==current.bytes.byteLength || actualSha256!==current.sha256)
+        return {status:"BYTE_MISMATCH",verified:false,bytes:bytes.byteLength,sha256:actualSha256};
+      const parsed=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
+      if(!parsed || parsed.exportedAt!==current.exportedAt || parsed.researchScope?.sourceKey!==current.sourceKey || parsed.researchScope?.key!==current.scopeKey)
+        return {status:"CONTENT_MISMATCH",verified:false};
+      return {status:"BYTE_VERIFIED",verified:true,bytes:bytes.byteLength,sha256:actualSha256,savedConfirmed:true};
+    }catch(error){return {status:"READ_FAILED",verified:false,message:String(error?.message||error)};}
+  }
+  return Object.freeze({prepare,describe,canShare,download,share,readback,cancel(){clearURL();current=null;},destroy(){clearURL();current=null;}});
+}
+return Object.freeze({createEvidenceFileDelivery});
+
+},
+"src/application/source-field-disposition.js":function(load){
+"use strict";
+const {deepFreeze}=load('src/core/data/immutability.js');
+const {resourceTypeMeasurements}=load('src/application/resource-type-measurements.js');
+const arr=x=>Array.isArray(x)?x:[], text=x=>x==null?'':String(x);
+const own=(o,k)=>o!=null&&Object.prototype.hasOwnProperty.call(o,k);
+const finite=x=>typeof x==='number'&&Number.isFinite(x);
+// This registry governs descriptive display only. It does not authorize metrics,
+// reinterpret source flags, or make an alias contract from matching field names.
+const SOURCE_FIELD_POLICIES=deepFreeze([
+ {field:'allocated_subscription_revenue_eur',collection:'outcomes',kind:'number',lensIds:['finance'],dependency:'value',limit:['Geen aanvullende omzet: allocatie, periode en overlap met gerealiseerde omzet zijn niet vastgesteld.','Not additional revenue: allocation, period and overlap with realized revenue are not established.']},
+ {field:'revenue_at_risk_eur',collection:'outcomes',kind:'number',lensIds:['risk'],dependency:'value',limit:['Geen risicosom: horizon en overlap met expected loss of value at risk zijn niet vastgesteld.','Not a risk total: horizon and overlap with expected loss or value at risk are not established.']},
+ {field:'customer_effort_seconds',collection:'events',kind:'number',actorType:'CUSTOMER',lensIds:['customer','resources','operations'],dependency:'behavior',limit:['Gebruik alleen bestaande getypeerde inzet. Registratiegelijkheid is geen universeel alias- of kwaliteitsoordeel; nooit dubbel optellen.','Use existing typed input only. Record equality is not a universal alias or quality judgment; never add twice.']},
+ {field:'external_effort_seconds',collection:'events',kind:'number',actorType:'EXTERNAL',lensIds:['resources','operations'],dependency:'behavior',limit:['Gebruik alleen bestaande getypeerde externe inzet. Geen interne capaciteit, besparing of opbrengst; nooit dubbel optellen.','Use existing typed external input only. Not internal capacity, savings or revenue; never add twice.']},
+ {field:'business_successful',collection:'outcomes',kind:'boolean',lensIds:['operations'],dependency:'value',limit:['Bronvlag, geen zakelijke-succesratio: succesregel, populatie en verschil met completed/successful zijn niet vastgesteld.','Source flag, not a business-success rate: success rule, population and distinction from completed/successful are not established.']},
+ {field:'control_successful',collection:'outcomes',kind:'boolean',lensIds:['compliance'],dependency:'value',limit:['Bronvlag, geen compliancepercentage: controlverplichting en toepasselijke populatie zijn niet vastgesteld.','Source flag, not a compliance percentage: control obligation and applicable population are not established.']},
+ {field:'safe_refusal',collection:'outcomes',kind:'boolean',lensIds:['risk','compliance'],dependency:'value',limit:['Bronvlag, geen veiligheidsscore: weigeringsgrond, toepasselijkheid en betekenis van false zijn niet vastgesteld.','Source flag, not a safety score: refusal grounds, applicability and meaning of false are not established.']},
+ {field:'escalated',collection:'outcomes',kind:'boolean',lensIds:['operations'],dependency:'value',limit:['Brongebonden escalatievlag: trigger, fase en noemer zijn niet vastgesteld; niet tussen bronnen gelijkstellen.','Source-specific escalation flag: trigger, phase and denominator are not established; do not equate across sources.']}
+]);
+function inspectRows(rows,policy){
+ let present=0,valid=0,nulls=0,invalid=0;const sampleRecordRefs=[];
+ for(const row of rows){
+  if(!own(row?.measures,policy.field))continue;
+  present++;const v=row.measures[policy.field];const ok=policy.kind==='boolean'?typeof v==='boolean':finite(v);
+  if(v==null)nulls++;else if(ok)valid++;else invalid++;
+  if(sampleRecordRefs.length<20)sampleRecordRefs.push({recordId:text(row.event_id||row.outcome_id||row.id)||null,timestamp:row.timestamp||null,value:ok||v===null?v:null,valueKind:v===null?'null':typeof v});
+ }
+ return {scopeRecordCount:rows.length,presentRecords:present,validScalarRecords:valid,nullRecords:nulls,invalidRecords:invalid,absentRecords:rows.length-present,sampleRecordRefs};
+}
+function effortParity(events,actors,policy){
+ const actorTypes=new Map(actors.map(a=>[text(a.actor_id||a.id),text(a.actor_type||a.resource_type)]));
+ const seen=new Set();let compared=0,mismatches=0,incomplete=0,identityIssues=0;
+ for(const event of events){
+  const eid=text(event.event_id||event.id);if(!eid||seen.has(eid))identityIssues++;seen.add(eid);
+  const value=event?.measures?.[policy.field];let sum=0,bad=!own(event?.measures,policy.field)||!finite(value)||value<0;
+  for(const usage of arr(event.resource_usage)){
+   const aid=text(usage?.actor_id),type=actorTypes.get(aid);
+   if(!aid||!type){bad=true;continue;}
+   if(type!==policy.actorType)continue;
+   if(!finite(usage.duration_seconds)||usage.duration_seconds<0)bad=true;else sum+=usage.duration_seconds;
+  }
+  if(bad||!Number.isFinite(sum)){incomplete++;continue;}
+  compared++;if(sum!==value)mismatches++;
+ }
+ return {kind:'CURRENT_SCOPED_EVENT_VALUE_PARITY_ONLY',events:events.length,compared,mismatches,incomplete,identityIssues,
+  matches:events.length>0&&compared===events.length&&mismatches===0&&identityIssues===0,
+  semanticEquivalenceEstablished:false,universalAliasContract:false,zeroWithoutUsageIsNotMeasuredParticipation:true};
+}
+function projectSourceFieldDisposition({research,context={},included={},typedFacts=null}={}){
+ if(!research?.valid||!research.source)return deepFreeze({schema:'pirl.source-field-disposition.v1',status:'INVALID_SCOPE',entries:[]});
+ const sourceKey=research.scope.sourceKey,scopeKey=research.scope.key;
+ let typed=null;const entries=[];
+ for(const p of SOURCE_FIELD_POLICIES){
+  const base={fieldPath:p.collection+'.measures.'+p.field,lensIds:p.lensIds,sourceKey,populationKey:scopeKey,
+   observedPeriod:research.scope.observedPeriod||context.observedPeriod||null,limitation:p.limit,
+   derivedMetricAuthorized:false,additive:false,actionAuthorized:false,sourceRecordAccessRoute:'explore.dataset'};
+  if(included[p.dependency]!==true){entries.push({...base,status:'WITHHELD_BY_EVIDENCE',requiredEvidence:[p.dependency]});continue;}
+  if(context.focus){entries.push({...base,status:'WITHHELD_FOCUS_NOT_ALLOCATION'});continue;}
+  const rows=arr(research.scope.records?.[p.collection]),observations=inspectRows(rows,p);
+  let status=!rows.length?'NO_RECORDS_IN_SCOPE':!observations.presentRecords?'FIELD_NOT_PRESENT_IN_SCOPE':'SOURCE_PRESENT_SEMANTICS_UNCONTRACTED';
+  let reconciliation=null,canonicalFactId=null;
+  if(p.actorType&&observations.presentRecords){
+   reconciliation=effortParity(rows,arr(research.source.actors),p);
+   if(typed===null)typed=typedFacts||resourceTypeMeasurements({research,context,included});
+   const f=typed.find(f=>f.id==='resource_type_effort:'+p.actorType&&f.provenance?.sourceKey===sourceKey&&f.provenance?.populationKey===scopeKey&&finite(f.value));
+   if(reconciliation.matches&&f){status='RECONCILED_TO_EXISTING_TYPED_INPUT';canonicalFactId=f.id;}
+  }
+  entries.push({...base,status,canonicalFactId,reconciliation,
+   provenance:{collection:p.collection,sourceFields:[base.fieldPath],sourceKey,populationKey:scopeKey,...observations,
+    sampleOnly:true,countsAreCoverageNotPerformance:true,query:'Inspect explicit scoped source scalars; no amount/rate derived; effort parity compares each event with declared-type resource_usage only.'}});
+ }
+ return deepFreeze({schema:'pirl.source-field-disposition.v1',status:'DESCRIPTIVE_METADATA_ONLY',sourceKey,populationKey:scopeKey,entries,
+  boundaries:['Source presence is not a semantic contract.','Reconciled values reuse one existing fact, never a second additive metric.','Current record equality grants no universal source alias.','Missing, false and zero are distinct.']});
+}
+return Object.freeze({SOURCE_FIELD_POLICIES,projectSourceFieldDisposition});
+
+}},cache=Object.create(null);function load(id){if(cache[id])return cache[id];if(!modules[id])throw Error("Missing linked module "+id);return cache[id]=modules[id](load);}load("src/main.js");})();</script>
+
+<style id="pirl-ls002-style">
+.pirl-ls2-banner{margin:12px 14px;padding:12px 14px;border:1px solid #b8d2d6;border-radius:14px;background:#eef9f9;color:#102038;line-height:1.4}.pirl-ls2-banner b{display:block;margin-bottom:3px}.pirl-ls2-banner .meta{font-size:.86rem;color:#53677b}.pirl-ls2-banner.warn{background:#fff7df;border-color:#e5c86c}.pirl-ls2-card{margin:14px 0;padding:14px;border:1px solid #c9d9df;border-radius:16px;background:#f8fbfc;color:#102038}.pirl-ls2-card h3{margin:0 0 5px}.pirl-ls2-card p{margin:4px 0 9px;color:#53677b}.pirl-ls2-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.pirl-ls2-metric{padding:9px;border:1px solid #dce7eb;border-radius:11px;background:#fff}.pirl-ls2-metric small{display:block;color:#65778a}.pirl-ls2-metric b{font-size:1.08rem}.pirl-ls2-controls{display:grid;gap:9px;margin-top:10px}.pirl-ls2-controls select{width:100%;padding:10px;border:1px solid #acbec7;border-radius:10px;background:#fff;font-size:1rem}.pirl-ls2-btn{border:1px solid #94aab5;background:#fff;color:#102038;border-radius:11px;padding:9px 12px;font-weight:800}.pirl-ls2-btn.primary{background:#0d7a80;border-color:#0d7a80;color:#fff}.pirl-ls2-progress{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;min-width:0;max-width:100%;box-sizing:border-box;border-left:4px solid #0d7a80;background:#edf8f8;border-radius:10px;padding:10px 12px;margin-top:9px;font-size:.9rem}.pirl-ls2-progress.fail{border-color:#b42318;background:#fff0ef}.pirl-ls2-chip{display:inline-block;padding:3px 8px;border-radius:999px;background:#def3f2;color:#075f64;font-size:.75rem;font-weight:800}.pirl-ls2-census{width:100%;border-collapse:collapse;font-size:.86rem}.pirl-ls2-census td{padding:4px 0;border-bottom:1px solid #e4ecef}.pirl-ls2-census td:last-child{text-align:right;font-weight:700}
+@media(max-width:520px){.pirl-ls2-grid{grid-template-columns:1fr 1fr}.pirl-ls2-card{padding:12px}}
+</style>
+<script id="pirl-ls002-script">
+(()=>{
+"use strict";
+const VERSION="PRO-004-v2.5.0";
+const MAX_RESIDENT=128*1024*1024;
+const XES_PART_CASES=500,OCDS_PART_RECORDS=2000;
+const td=new TextDecoder("utf-8"),te=new TextEncoder();
+const state={mode:"IDLE",busy:false,error:null,index:null,activePartition:null,progress:"",observer:null,source:null,intake:null};
+const fmt=n=>Number(n||0).toLocaleString("nl-NL");
+const esc=v=>String(v??"").replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const app=()=>globalThis.__PIRL_CLEAN_APP__||null;
+function cleanName(n){let s=String(n||"");try{s=decodeURIComponent(s)}catch{}return s.replace(/(\.(?:xes|xml|jsonl|ndjson|json|csv))\(\d+\)(?=\.gz$|$)/i,"$1");}
+function safe(v){return String(v||"source").trim().replace(/\s+/g,"-").replace(/[^A-Za-z0-9_.:-]/g,"-")||"source";}
+function sourceType(n){const x=cleanName(n).toLowerCase();if(/\.(?:xes|xml)\.gz$/.test(x))return"XES_GZ";if(/\.(?:xes|xml)$/.test(x))return"XES";if(/\.(?:jsonl|ndjson)\.gz$/.test(x))return"JSONL_GZ";if(/\.(?:jsonl|ndjson)$/.test(x))return"JSONL";return null;}
+async function gzipSize(file){if(!/\.gz$/i.test(file.name)||file.size<4)return null;const b=new Uint8Array(await file.slice(file.size-4).arrayBuffer());return new DataView(b.buffer).getUint32(0,true);}
+async function shouldAutoIndex(file,probe=null){
+ const p=probe||await globalThis.__PIRL_SOURCE_PROBE__?.probeSourceFile?.(file).catch(()=>null);
+ const kind=p?.largeKind||sourceType(file.name); if(!kind)return {yes:false,kind:null,declared:p?.declaredUncompressedBytes??null,probe:p};
+ const declared=p?.declaredUncompressedBytes??(kind==="XES"||kind==="JSONL"?file.size:await gzipSize(file));
+ const large=(kind==="XES"||kind==="JSONL")?file.size>MAX_RESIDENT:Number(declared||0)>MAX_RESIDENT;
+ return {yes:large,kind,declared,probe:p};
+}
+function xml(v){return String(v||"").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');}
+function xattrFast(fragment,key){
+ let p=fragment.indexOf(`key="${key}"`),q='"';if(p<0){p=fragment.indexOf(`key='${key}'`);q="'";}if(p<0)return null;
+ const a=fragment.lastIndexOf('<',p),z=fragment.indexOf('>',p);if(a<0||z<0)return null;const tag=fragment.slice(a,z+1);
+ let v=tag.indexOf('value="'),vq='"',off=7;if(v<0){v=tag.indexOf("value='");vq="'";off=7;}if(v<0)return null;const e=tag.indexOf(vq,v+off);return e<0?null:xml(tag.slice(v+off,e));
+}
+async function gzipBlob(text){const stream=new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));return await new Response(stream).blob();}
+async function gunzipBlob(blob){const stream=blob.stream().pipeThrough(new DecompressionStream("gzip"));return await new Response(stream).text();}
+function update(msg){state.progress=String(msg||"");renderAll();}
+function variantId(seq){let h=2166136261;for(const s of seq){for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}h^=31;h=Math.imul(h,16777619);}return (h>>>0).toString(16).padStart(8,"0");}
+function addCount(map,key,n=1){map.set(key,(map.get(key)||0)+n);}
+async function buildXes(file,kind){
+ const raw=kind==="XES_GZ"?file.stream().pipeThrough(new DecompressionStream("gzip")):file.stream();
+ const reader=raw.pipeThrough(new TextDecoderStream()).getReader();
+ const actors=new Map(),activity=new Map(),variants=new Map(),parts=[],partCases=[],partActors=new Map();let actorSeq=0,traceIndex=0,totalEvents=0,minTime=null,maxTime=null,buffer="";
+ const actorId=res=>{if(!res)return null;if(!actors.has(res))actors.set(res,`ACT-XES-${String(++actorSeq).padStart(4,"0")}`);return actors.get(res);};
+ async function flush(){if(!partCases.length)return;const id=`p${String(parts.length+1).padStart(4,"0")}`;const rawObj={schema:"PIRL_LARGE_SOURCE_PARTITION_V1",kind:"XES",id,cases:partCases.splice(0),actors:[...partActors].map(([id,name])=>[id,name])};partActors.clear();const txt=JSON.stringify(rawObj),blob=await gzipBlob(txt),ec=rawObj.cases.reduce((n,c)=>n+(c[4]?.length||0),0);parts.push({id,ordinal:parts.length+1,blob,compressedBytes:blob.size,uncompressedBytes:txt.length,caseCount:rawObj.cases.length,eventCount:ec,objectCount:rawObj.cases.length,actorCount:rawObj.actors.length,firstCaseId:rawObj.cases[0]?.[1]||null,lastCaseId:rawObj.cases.at(-1)?.[1]||null,startedAt:rawObj.cases.map(c=>c[2]).filter(Boolean).sort()[0]||null,completedAt:rawObj.cases.map(c=>c[3]).filter(Boolean).sort().at(-1)||null});await new Promise(r=>setTimeout(r,0));}
+ async function trace(tr){traceIndex++;const first=tr.indexOf("<event"),head=first<0?tr:tr.slice(0,first);const cid=xattrFast(head,"concept:name")||String(traceIndex),evs=[],seq=[];let firstTs=null,lastTs=null,pos=first<0?tr.length:first,ei=0;while(pos<tr.length){const a=tr.indexOf("<event",pos);if(a<0)break;const z=tr.indexOf("</event>",a);if(z<0)break;const block=tr.slice(a,z+8),act=xattrFast(block,"concept:name")||"XES_EVENT",ts=xattrFast(block,"time:timestamp"),res=xattrFast(block,"org:resource"),life=xattrFast(block,"lifecycle:transition"),aid=actorId(res);if(aid)partActors.set(aid,res);evs.push([act,ts,aid,life]);seq.push(act);addCount(activity,act);totalEvents++;ei++;if(ts){firstTs=firstTs||ts;lastTs=ts;minTime=!minTime||ts<minTime?ts:minTime;maxTime=!maxTime||ts>maxTime?ts:maxTime;}pos=z+8;}const vk=seq.join("\u001f"),old=variants.get(vk);if(old)old.count++;else variants.set(vk,{variantId:variantId(seq),count:1,sequence:seq});partCases.push([traceIndex,cid,firstTs,lastTs,evs]);if(partCases.length>=XES_PART_CASES)await flush();if(traceIndex%250===0){update(`${fmt(traceIndex)} XES-cases · ${fmt(totalEvents)} bron-events geïndexeerd · ${parts.length} partities`);await new Promise(r=>setTimeout(r,0));}}
+ while(true){const {value,done}=await reader.read();if(value)buffer+=value;while(true){let a=buffer.indexOf("<trace");if(a<0){if(buffer.length>16384)buffer=buffer.slice(-16384);break;}if(a>0)buffer=buffer.slice(a);const z=buffer.indexOf("</trace>");if(z<0)break;const end=z+8,tr=buffer.slice(0,end);buffer=buffer.slice(end);await trace(tr);}if(done)break;}
+ await flush();if(!traceIndex)throw Object.assign(new Error("Geen XES-traces gevonden."),{code:"LS002_XES_EMPTY"});const v=[...variants.values()].sort((a,b)=>b.count-a.count||a.variantId.localeCompare(b.variantId));return {source:{name:file.name,format:kind,compressedBytes:file.size,declaredUncompressedBytes:await gzipSize(file)},semantics:{population:"EXACT_FULL_POPULATION",detail:"EXACT_PARTITION",sampling:"NONE",truncation:"NONE"},population:{events:totalEvents,cases:traceIndex,objects:traceIndex,actors:actors.size,processes:1},timeRange:{min:minTime,max:maxTime},activityDistribution:[...activity].sort((a,b)=>b[1]-a[1]).map(([activity,count])=>({activity,count})),variantDistribution:v,variantCount:v.length,processes:[{processId:"P-XES",name:cleanName(file.name).replace(/\.gz$/i,"").replace(/\.(xes|xml)$/i,""),cases:traceIndex,events:totalEvents}],partitioning:{unit:"case",partitionCount:parts.length,ordering:"SOURCE_ORDER",complete:true},parts,cacheBytes:parts.reduce((n,p)=>n+p.compressedBytes,0),capabilities:{globalCensus:true,partitionMaterialization:true,sourceDirect:true,caseLookupIndex:false,crossPartitionDetailQuery:false}};
+}
+async function buildOcdsJsonl(file,kind){
+ const raw=kind==="JSONL_GZ"?file.stream().pipeThrough(new DecompressionStream("gzip")):file.stream();const reader=raw.pipeThrough(new TextDecoderStream()).getReader();let carry="",total=0,minTime=null,maxTime=null;const activity=new Map(),variants=new Map(),parts=[],seenOcids=new Set();let partStart=1,partCount=0,partFirst=null,partLast=null,partMin=null,partMax=null;
+ function flushMeta(){if(!partCount)return;const id=`p${String(parts.length+1).padStart(4,"0")}`;parts.push({id,ordinal:parts.length+1,storage:"OCDS_SOURCE_REPLAY",startRecord:partStart,endRecord:partStart+partCount-1,caseCount:partCount,eventCount:partCount,objectCount:partCount,actorCount:0,firstCaseId:partFirst,lastCaseId:partLast,startedAt:partMin,completedAt:partMax});partStart=total+1;partCount=0;partFirst=partLast=partMin=partMax=null;}
+ async function line(s){if(!s.trim())return;let r;try{r=JSON.parse(s)}catch(e){throw Object.assign(new Error(`JSONL-regel ${total+1} is ongeldig: ${e.message}`),{code:"MALFORMED_JSONL"});}if(!r?.ocid||!r?.id)throw Object.assign(new Error(`JSONL-regel ${total+1} bevat geen herkenbaar OCDS-releaseobject.`),{code:"UNRECOGNIZED_JSONL"});const ocid=String(r.ocid);if(seenOcids.has(ocid))throw Object.assign(new Error(`OCDS-case ${ocid} bevat meerdere releases. LS-002 C1 ondersteunt voor automatische grote JSONL-onboarding nog één release per ocid.`),{code:"LS002_OCDS_MULTI_RELEASE_CASE_UNSUPPORTED_C1"});seenOcids.add(ocid);total++;partCount++;const date=r.date||null,tags=Array.isArray(r.tag)?r.tag.map(String):[],act=tags[0]||"RELEASE";addCount(activity,act);addCount(variants,act);if(date){minTime=!minTime||date<minTime?date:minTime;maxTime=!maxTime||date>maxTime?date:maxTime;partMin=!partMin||date<partMin?date:partMin;partMax=!partMax||date>partMax?date:partMax;}partFirst=partFirst||ocid;partLast=ocid;if(partCount>=OCDS_PART_RECORDS)flushMeta();if(total%5000===0){update(`${fmt(total)} OCDS-records gecatalogiseerd · ${parts.length} partities`);await new Promise(r=>setTimeout(r,0));}}
+ while(true){const {value,done}=await reader.read();if(value){carry+=value;let i;while((i=carry.indexOf("\n"))>=0){const l=carry.slice(0,i).replace(/\r$/,"");carry=carry.slice(i+1);await line(l);}}if(done)break;}if(carry.trim())await line(carry.replace(/\r$/,"") );flushMeta();if(!total)throw Object.assign(new Error("Geen OCDS JSONL-records gevonden."),{code:"LS002_OCDS_EMPTY"});const v=[...variants].map(([a,count])=>({variantId:variantId([a]),count,sequence:[a]})).sort((a,b)=>b.count-a.count);return {source:{name:file.name,format:kind,compressedBytes:file.size,declaredUncompressedBytes:await gzipSize(file)},semantics:{population:"EXACT_FULL_POPULATION",detail:"EXACT_PARTITION_FROM_SOURCE_REPLAY",sampling:"NONE",truncation:"NONE",fieldProjection:"FULL_OCDS_RELEASE_ON_MATERIALIZATION"},population:{events:total,cases:total,objects:total,actors:0,processes:1},timeRange:{min:minTime,max:maxTime},activityDistribution:[...activity].sort((a,b)=>b[1]-a[1]).map(([activity,count])=>({activity,count})),variantDistribution:v,variantCount:v.length,processes:[{processId:"P-OCDS",name:"OCDS contracting process",cases:total,events:total}],partitioning:{unit:"case",partitionCount:parts.length,ordering:"SOURCE_ORDER",complete:true},parts,cacheBytes:0,capabilities:{globalCensus:true,partitionMaterialization:true,sourceDirect:true,caseLookupIndex:false,crossPartitionDetailQuery:false,oneReleasePerOcid:true,sourceReplay:true}};}
+async function replayOcdsPartition(file,kind,part){const raw=kind==="JSONL_GZ"?file.stream().pipeThrough(new DecompressionStream("gzip")):file.stream(),reader=raw.pipeThrough(new TextDecoderStream()).getReader();let carry="",record=0;const lines=[];async function take(s){if(!s.trim())return;record++;if(record>=part.startRecord&&record<=part.endRecord)lines.push(s);if(record%10000===0)await new Promise(r=>setTimeout(r,0));}
+ while(record<part.endRecord){const {value,done}=await reader.read();if(value){carry+=value;let i;while((i=carry.indexOf("\n"))>=0&&record<part.endRecord){const l=carry.slice(0,i).replace(/\r$/,"");carry=carry.slice(i+1);await take(l);}}if(done)break;}try{await reader.cancel()}catch{}if(record<part.endRecord&&carry.trim())await take(carry.replace(/\r$/,"") );if(lines.length!==part.caseCount)throw Object.assign(new Error(`Bronreplay leverde ${lines.length} records; verwacht ${part.caseCount}.`),{code:"LS002_SOURCE_REPLAY_COUNT_MISMATCH"});return {schema:"PIRL_LARGE_SOURCE_PARTITION_V1",kind:"OCDS_JSONL_RAW",id:part.id,lines};}
+function meta(index,part){return {schema:"PIRL_LARGE_SOURCE_RUNTIME_V2",mode:"AUTO_INDEXED_STREAM",source_name:index.source.name,source_format:index.source.format,source_sha256:null,source_hash_status:"NOT_COMPUTED_STREAMING_C1",population:index.population,materialized:{partition_id:part.id,partition_ordinal:part.ordinal,partition_count:index.partitioning.partitionCount,cases:part.caseCount,events:part.eventCount,objects:part.objectCount,actors:part.actorCount},semantics:{global:"EXACT_FULL_POPULATION_CENSUS",detail:"EXACT_MATERIALIZED_PARTITION",sampling:"NONE",truncation:"NONE"},internal_cache:{format:index.source.format.startsWith("JSONL")?"SOURCE_REPLAY_BOUNDARIES":"GZIP_JSON_PARTITIONS",compressed_bytes:index.cacheBytes}};}
+async function readPart(part){const text=await gunzipBlob(part.blob);if(part.storage==="OCDS_RAW_JSONL_GZIP")return {schema:"PIRL_LARGE_SOURCE_PARTITION_V1",kind:"OCDS_JSONL_RAW",id:part.id,lines:text.split(/\r?\n/).filter(Boolean)};return JSON.parse(text);}
+function expand(raw,index,part){const src=index.source.name,ls=meta(index,part);if(raw.kind==="XES"){const actors=(raw.actors||[]).map(([id,name])=>({actor_id:id,actor_type:"PERSON_OR_SYSTEM",display_name:name,roles:["ROLE-XES"],attributes:{},provenance:{source_type:"XES",source_ref:src}})),objects=[],events=[],case_index=[];for(const c of raw.cases||[]){const [ti,cid,start,end,evs]=c,oid=`XES-${safe(cid)}`;objects.push({object_id:oid,object_type:"case",name:cid,lifecycle_status:"IMPORTED",attributes:{source:src},provenance:{source_type:"XES",source_ref:src}});case_index.push({process_id:"P-XES",case_id:cid,case_object_id:oid,display_case_id:cid,case_status:"IMPORTED",started_at:start,completed_at:end});(evs||[]).forEach((e,j)=>{const [activity,timestamp,actorId,lifecycle]=e;events.push({event_id:`EVT-XES-${ti}-${j+1}`,case_id:cid,process_id:"P-XES",activity_id:activity,event_type:activity,timestamp,object_ids:[oid],actor_ids:actorId?[actorId]:[],attributes:{lifecycle},provenance:{source_type:"XES",source_ref:src}});});}return {schema:"adapter.auto-large-source.v2",bundle_id:`LS2-${safe(src)}-${part.id}`,manifest:{name:`${src} · auto large-source ${part.ordinal}/${index.partitioning.partitionCount}`,source_format:index.source.format,large_source:ls},collections:{events,objects,actors,case_index,processes:[{process_id:"P-XES",name:index.processes[0]?.name||"XES process"}]}};}
+ if(raw.kind==="OCDS_JSONL_RAW"){const objects=[],events=[],case_index=[];let n=0;for(const line of raw.lines||[]){const r=JSON.parse(line),ocid=String(r.ocid),rid=String(r.id),date=r.date||null,tags=Array.isArray(r.tag)?r.tag.map(String):[],oid=`OCDS-${safe(ocid)}`,activity=tags[0]||"RELEASE";objects.push({object_id:oid,object_type:"contracting_process",name:ocid,lifecycle_status:"IMPORTED",attributes:{ocid},provenance:{source_type:"OCDS",source_ref:src}});case_index.push({process_id:"P-OCDS",case_id:ocid,case_object_id:oid,display_case_id:ocid,case_status:"IMPORTED",started_at:date,completed_at:date});events.push({event_id:rid,case_id:ocid,process_id:"P-OCDS",activity_id:activity,event_type:`OCDS_${tags.length?tags.join("_"):"RELEASE"}`,timestamp:date,object_ids:[oid],actor_ids:[],attributes:{tender:r.tender??null,awards:r.awards??null,contracts:r.contracts??null},provenance:{source_type:"OCDS",source_ref:src}});n++;}return {schema:"adapter.auto-large-source.v2",bundle_id:`LS2-${safe(src)}-${part.id}`,manifest:{name:`${src} · auto large-source ${part.ordinal}/${index.partitioning.partitionCount}`,source_format:index.source.format,large_source:ls},collections:{events,objects,case_index,processes:[{process_id:"P-OCDS",name:"OCDS contracting process"}]}};}
+ throw Object.assign(new Error("Onbekende interne large-source partitie."),{code:"LS002_PARTITION_KIND"});}
+async function materialize(id){if(!state.index)return false;const part=state.index.parts.find(p=>p.id===id)||state.index.parts[0];state.busy=true;state.error=null;update(`${part.id}: volledige partitie materialiseren…`);try{const raw=part.storage==="OCDS_SOURCE_REPLAY"?await replayOcdsPartition(state.source,state.index.source.format,part):await readPart(part),bundle=expand(raw,state.index,part);await app().runtimeStore.activateRaw(bundle,{kind:"external",id:`auto-large:${safe(state.source?.name)}:${part.id}`,reason:"automatic large-source materialization"});state.activePartition=part.id;state.mode="AUTO_INDEXED_READY";update(`${part.id} actief · ${fmt(part.caseCount)} cases · ${fmt(part.eventCount)} events`);return true;}catch(e){state.error={code:e?.code||"LS002_MATERIALIZE_FAILED",message:String(e?.message||e)};state.mode="ERROR";return false;}finally{state.busy=false;renderAll();}}
+async function autoIndex(file,decision){state.busy=true;state.error=null;state.mode="AUTO_INDEXING";state.source=file;state.index=null;state.activePartition=null;update(`${file.name}: grote bron gedetecteerd · streaming index starten…`);try{let index;if(decision.kind.startsWith("XES"))index=await buildXes(file,decision.kind);else if(decision.kind.startsWith("JSONL"))index=await buildOcdsJsonl(file,decision.kind);else throw Object.assign(new Error("Automatische large-source onboarding ondersteunt deze grote bron nog niet."),{code:"LS002_UNSUPPORTED_LARGE_FORMAT"});state.index=index;state.mode="AUTO_INDEXED";update(`Index gereed · ${fmt(index.population.cases)} cases · ${fmt(index.population.events)} bron-events · ${index.partitioning.partitionCount} partities · interne cache ${fmt(index.cacheBytes)} bytes`);state.busy=false;await materialize(index.parts[0]?.id);return true;}catch(e){state.error={code:e?.code||"LS002_INDEX_FAILED",message:String(e?.message||e)};state.mode="ERROR";state.busy=false;renderAll();return false;}}
+async function importOriginal(file){
+ state.error=null;state.source=file;state.index=null;state.activePartition=null;
+ try{
+   const probe=await globalThis.__PIRL_SOURCE_PROBE__?.probeSourceFile?.(file).catch(cause=>{throw cause})||null;
+   state.intake=probe?{original_name:file.name,size:file.size,container:probe.container||null,structure:probe.structure||null,confidence:probe.confidence||null,declared_uncompressed_bytes:probe.declaredUncompressedBytes??null,route:null}:null;
+   if(probe?.container==="GZIP"&&Number(probe.declaredUncompressedBytes||0)>MAX_RESIDENT&&!probe.largeKind){
+     throw Object.assign(new Error(`Structuur ${probe.structure||"onbekend"} is herkend, maar deze grote GZIP-bron heeft in C1 nog geen streamingadapter. Bron wordt niet gedeeltelijk geladen.`),{code:"SUPPORTED_STRUCTURE_TOO_LARGE_NO_STREAM_ADAPTER"});
+   }
+   const decision=await shouldAutoIndex(file,probe);
+   if(decision.yes){if(state.intake)state.intake.route="AUTO_INDEXED_STREAM";return autoIndex(file,decision);}
+   state.mode="DIRECT_RESIDENT";if(state.intake)state.intake.route="DIRECT_RESIDENT";update(`${file.name}: structuur ${probe?.structure||"adapter-detectie"} · exacte resident-import…`);
+   const ok=await app().loadExplorerController.importFile(file);state.busy=false;
+   if(!ok){const er=app().loadExplorerController.getState?.().error;state.error=er?{code:er.code,message:er.message}:null;state.mode="ERROR";}
+   else update(`${file.name}: resident geladen.`);renderAll();return ok;
+ }catch(e){state.error={code:e?.code||"EXTERNAL_SOURCE_INTAKE_FAILED",message:String(e?.message||e)};state.mode="ERROR";state.busy=false;if(state.intake)state.intake.route="REJECTED";renderAll();return false;}
+}
+function statusHtml(){if(!state.source&&!state.error)return"";const q=state.intake||{};const intake=`<div class="pirl-ls2-banner"><b>Externe bron-intake</b><span class="meta">container=${esc(q.container||"?")} · structuur=${esc(q.structure||"?")} · detectie=${esc(q.confidence||"?")} · route=${esc(q.route||state.mode||"?")}${q.declared_uncompressed_bytes?` · gedeclareerd uitgepakt=${fmt(q.declared_uncompressed_bytes)} bytes`:""}</span></div>`;if(state.error)return `${intake}<div class="pirl-ls2-progress fail"><b>${esc(state.error.code)}</b> · ${esc(state.error.message)}</div>`;if(state.mode==="DIRECT_RESIDENT")return `${intake}<div class="pirl-ls2-progress"><b>Exact resident</b> · ${esc(state.source.name)}<br>${esc(state.progress)}</div>`;const i=state.index;if(!i)return `<div class="pirl-ls2-progress"><b>Automatic large-source onboarding</b> · ${esc(state.source?.name||"")}<br>${esc(state.progress)}</div>`;const p=i.population,part=i.parts.find(x=>x.id===state.activePartition)||i.parts[0],acts=i.activityDistribution.slice(0,8).map(x=>`<tr><td>${esc(x.activity)}</td><td>${fmt(x.count)}</td></tr>`).join("");return `${intake}<section class="pirl-ls2-card" data-ls2-card><div><span class="pirl-ls2-chip">AUTO INDEXED STREAM</span><h3>${esc(i.source.name)}</h3><p>PRO-004 heeft de originele bron zelf streaming geïndexeerd. Geen voorafgaand .pirlpack nodig.</p></div><div class="pirl-ls2-grid"><div class="pirl-ls2-metric"><small>Volledige populatie</small><b>${fmt(p.cases)} cases</b></div><div class="pirl-ls2-metric"><small>Bron-events</small><b>${fmt(p.events)}</b></div><div class="pirl-ls2-metric"><small>Partities</small><b>${fmt(i.partitioning.partitionCount)}</b></div><div class="pirl-ls2-metric"><small>Interne cache</small><b>${(i.cacheBytes/1048576).toFixed(1)} MiB</b></div></div><div class="pirl-ls2-banner"><b>Semantiek</b><span class="meta">Globale census = EXACT_FULL_POPULATION · detail = EXACT_MATERIALIZED_PARTITION · sampling = NONE · truncation = NONE. Bron-SHA256 wordt in C1 nog niet streaming berekend en staat daarom expliciet op NOT_COMPUTED.</span></div><details><summary>Globale census</summary><div class="meta">${esc(i.timeRange.min||"?")} → ${esc(i.timeRange.max||"?")} · ${fmt(i.variantCount)} varianten</div><table class="pirl-ls2-census">${acts}</table></details><div class="pirl-ls2-controls"><label><b>Detailpartitie</b><select data-ls2-partition>${i.parts.map(x=>`<option value="${x.id}" ${x.id===state.activePartition?"selected":""}>${x.ordinal}/${i.parts.length} · ${fmt(x.caseCount)} cases · ${fmt(x.eventCount)} events · ${esc(x.firstCaseId)} → ${esc(x.lastCaseId)}</option>`).join("")}</select></label><button class="pirl-ls2-btn primary" data-ls2-materialize ${state.busy?"disabled":""}>${state.busy?"Verwerken…":"Materialiseer gekozen volledige partitie"}</button></div><div class="pirl-ls2-progress">${esc(state.progress)}</div></section>`;}
+function renderLoad(){const sec=document.querySelector("#app .load-import");if(!sec)return;const key=JSON.stringify([state.mode,state.busy,state.progress,state.activePartition,state.error?.code,state.error?.message,state.index?.population?.events,state.index?.cacheBytes]);let host=document.querySelector("#app [data-ls2-host]");const html=statusHtml();if(!html){host?.remove();return;}if(!host){host=document.createElement("div");host.dataset.ls2Host="1";sec.insertAdjacentElement("afterend",host);}if(host.dataset.key===key)return;host.dataset.key=key;host.innerHTML=html;const card=host.querySelector("[data-ls2-card]");if(card)card.querySelector("[data-ls2-materialize]")?.addEventListener("click",()=>materialize(card.querySelector("[data-ls2-partition]")?.value));}
+function renderCoverage(){const m=app()?.runtimeStore?.snapshot?.()?.model?.manifest?.large_source;const sec=document.querySelector("#app .section.active")||document.querySelector("#app .section");if(!sec)return;const key=m?JSON.stringify([m.source_name,m.materialized?.partition_id,m.materialized?.events]):"none";let div=sec.querySelector(":scope > .pirl-ls2-banner[data-coverage]");if(!m){div?.remove();return;}if(!div){div=document.createElement("div");div.className="pirl-ls2-banner warn";div.dataset.coverage="1";sec.prepend(div);}if(div.dataset.key===key)return;div.dataset.key=key;const p=m.population||{},d=m.materialized||{};div.innerHTML=`<b>Grote bron · exacte detailpartitie ${esc(d.partition_ordinal)}/${esc(d.partition_count)}</b><span class="meta">${fmt(d.cases)} van ${fmt(p.cases)} cases · ${fmt(d.events)} van ${fmt(p.events)} bron-events zijn nu resident. Globale census is exact voor 100% van de bron; dit scherm toont de gekozen volledige partitie.</span>`;}
+function renderAll(){requestAnimationFrame(()=>{renderLoad();renderCoverage();});}
+function intercept(e){const input=e.target?.closest?.("[data-load-file]");if(!input)return;const file=input.files?.[0];if(!file)return;e.preventDefault();e.stopImmediatePropagation();e.stopPropagation();input.value="";importOriginal(file);}
+function boot(){if(!app()){setTimeout(boot,50);return;}document.addEventListener("change",intercept,true);app().runtimeStore.subscribe(()=>renderAll());app().router?.subscribe?.(()=>renderAll());setInterval(renderAll,750);renderAll();globalThis.__PIRL_LS002__=Object.freeze({version:VERSION,state,shouldAutoIndex,importOriginal,autoIndex,materialize,probeSourceFile:(file)=>globalThis.__PIRL_SOURCE_PROBE__?.probeSourceFile?.(file)});}
+boot();
+})();
+
+</script>
+
+
+<!-- PRO-004-UI-001: obsolete floating external-source intake launcher removed; standard local source import retained. -->
+</body>
+</html>
