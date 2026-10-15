@@ -1,0 +1,48 @@
+name: Assemble exact PIRL v2.5.0 CLEAN HTML
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.upload_parts/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pirl-v25-exact-copy-publication
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout the public demonstration repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 2
+      - name: Join uploaded chunks and verify official immutable baseline SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d .upload_parts
+          test "$(find .upload_parts -maxdepth 1 -type f -name 'part-*' | wc -l)" = "24"
+          LC_ALL=C cat .upload_parts/part-* > index.html
+          test "$(stat -c %s index.html)" = "11627620"
+          echo '5c18a85f90b204b0ecf70229f204a7c0b79b21683f14999c5db493cc5a0a855a  index.html' | sha256sum --check
+          grep -q '<title>PIRL Process Intelligence Verkenner v2.5.0</title>' index.html
+          touch .nojekyll
+          printf '%s  %s\n' '5c18a85f90b204b0ecf70229f204a7c0b79b21683f14999c5db493cc5a0a855a' 'index.html' > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Commit only the verified HTML and minimal site metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r -- .upload_parts
+          git add -- index.html .nojekyll SHA256SUMS
+          git commit -m 'Publish byte-identical PIRL v2.5.0 CLEAN baseline for Safari via Pages'
+          git push origin HEAD:main
