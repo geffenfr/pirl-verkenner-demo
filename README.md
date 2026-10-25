@@ -1,13 +1,17 @@
-# PIRL Process Intelligence Verkenner v2.5.0 CLEAN
+# PIRL Process Intelligence Verkenner v2.6.0
 
-Publieke demonstratiepublicatie van de officieel geaccepteerde hersteluitgave van 23 oktober 2026. De ontwikkelrepository en historische tests/bewijsdossiers blijven prive.
+Publieke distributie van de geaccepteerde, bevroren v2.6.0-baseline, vastgesteld op 25 oktober 2026. De vaste productreleasedatum in de HTML is 23-10-2026.
 
 - Website: https://geffenfr.github.io/pirl-verkenner-demo/
 - Distributiebestand: `index.html`
-- SHA-256: `9d986378d1eb25e270ba3458336dd01479e4624d115f5560a5b88e1d86e76e59`
-- Bestandsgrootte: 11.640.026 bytes.
-- Bevat de geaccepteerde snelheidsverbeteringen, periodefiltering van doelen en normen en het verslepen van besluiten en communicatie.
-- Uitsluitend publieke, fictieve of synthetische demonstratiegegevens.
-- Gebruik: onafhankelijk PIRL-onderzoek en demonstraties; geen gecertificeerde productieoplossing.
+- SHA-256: `32bdabee5c790be19b2784541d9272763261d31cb27bb164d72e362458fe1d66`
+- Bestandsgrootte: 11.708.733 bytes.
+- Exact byte-identiek aan de officieel geaccepteerde v2.6.0-baseline.
 
-Deze publieke weergave bevat uitsluitend de extra versiedatum 23-10-2026 in de Nederlandse en Engelse versiebadge en browsertitel. De zes gerichte tekstvervangingen voegen samen 98 bytes toe. De HTML is daardoor niet byte-identiek aan de bevroren herstelbaseline (SHA-256 f9c7cf9461119f7f39401cd33e2abf9b2e4a1ea7de8e9e6ebd91f1c13ce2e19e); die baseline blijft ongewijzigd. Data, berekeningen, bediening en overige productcode zijn ongewijzigd. De bestaande website-URL blijft ongewijzigd. Historische versies blijven via de Git-geschiedenis bewaard. Dit is een presentatiegerichte distributierevisie op expliciet gebruikersverzoek; geen baselinepromotie, functionele uitbreiding of wijziging van de private development-oracle. De datum verwijst naar de hersteluitgave, niet naar de dag waarop de pagina wordt geopend.
+DEV-007: onderzoeksschermen bewaren als bookmarks, verhalen en hoofdstukken ordenen, met context openen en als compacte JSON bewaren en heropenen. RELEASE-001: Menu → Releases toont versie, datum, wijzigingen en beperkingen in NL/EN. Bestaande snelheids-, periode- en Object Explorer-correcties zijn behouden.
+
+Context herstellen vereist dezelfde bron en geldige verwijzingen. Laad na verhaalimport de oorspronkelijke bron via Onderzoeksbron. Lokale opslag en bestandsbediening hangen af van de browser of HTML-viewer; JSON is de overdraagbare versie. Een simulatiebookmark voert geen interventie uit.
+
+Uitsluitend publieke, fictieve of synthetische demonstratiegegevens. Bedoeld voor onderzoek en demonstratie; niet gecertificeerd voor productie of autonome organisatorische beslissingen.
+
+De bestaande website-URL en Pages-inrichting blijven behouden. Historische publieke versies blijven in de Git-geschiedenis. Private ontwikkelbronnen en bewijsdossiers worden niet gepubliceerd.
