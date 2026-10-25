@@ -1,0 +1,75 @@
+name: PIRL v2.6.0 bounded publication-date correction
+on:
+  push:
+    paths:
+      - .github/workflows/pirl-v260-date-20261025.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pirl-v260-date-20261025
+  cancel-in-progress: false
+jobs:
+  correct_date:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Verify exact parent bytes and apply only three date corrections
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          original='32bdabee5c790be19b2784541d9272763261d31cb27bb164d72e362458fe1d66'
+          expected='bc76b69223d840e1d8c1ebbe86c850accc285af65be655956c0b001c5b7c49cc'
+          index=Path('index.html')
+          old=index.read_bytes()
+          assert hashlib.sha256(old).hexdigest()==original,'PUBLIC_PARENT_CHANGED_NO_WRITE'
+          assert len(old)==11708733,'UNEXPECTED_PARENT_LENGTH'
+          text=old.decode('utf-8')
+          edits=[
+            ('v2.6.0 · 23-10-2026','v2.6.0 · 25-10-2026'),
+            ('"releaseDate": "2026-10-23"','"releaseDate": "2026-10-25"'),
+            ("version:'2.6.0',date:'2026-10-23',displayDate:'23-10-2026'",
+             "version:'2.6.0',date:'2026-10-25',displayDate:'25-10-2026'")
+          ]
+          for before,after in edits:
+            assert text.count(before)==1,('UNEXPECTED_DATE_OCCURRENCES',before,text.count(before))
+            text=text.replace(before,after)
+          updated=text.encode('utf-8')
+          assert hashlib.sha256(updated).hexdigest()==expected,'DERIVATIVE_BYTES_DIFFER'
+          assert len(updated)==len(old)==11708733,'UNEXPECTED_NEW_LENGTH'
+          assert "version:'2.5.0',date:'2026-10-23'" in text,'HISTORICAL_RELEASE_CHANGED'
+          index.write_bytes(updated)
+          checksums=Path('SHA256SUMS')
+          assert checksums.read_text().strip()==original+'  index.html','UNEXPECTED_PUBLIC_MANIFEST'
+          checksums.write_text(expected+'  index.html\n')
+          readme=Path('README.md')
+          doc=readme.read_text()
+          assert doc.count('De vaste productreleasedatum in de HTML is 23-10-2026.')==1
+          assert doc.count('Exact byte-identiek aan de officieel geaccepteerde v2.6.0-baseline.')==1
+          assert doc.count(original)==1
+          doc=doc.replace('De vaste productreleasedatum in de HTML is 23-10-2026.','De weergegeven v2.6.0-releasedatum is gecorrigeerd naar 25-10-2026, de werkelijke publicatiedatum. De historische v2.5.0-datum blijft 23-10-2026.')
+          doc=doc.replace('Exact byte-identiek aan de officieel geaccepteerde v2.6.0-baseline.','Gecontroleerde datumcorrectie van de publieke distributie. De oorspronkelijke immutable v2.6.0-baseline (SHA-256 '+original+') blijft ongewijzigd.')
+          doc=doc.replace('- SHA-256: '+chr(96)+original+chr(96),'- SHA-256: '+chr(96)+expected+chr(96))
+          readme.write_text(doc)
+          print('DATE_CHANGE_PASS',expected,'HTML_BYTES',len(updated))
+          PY
+      - name: Commit validated date-only distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(git rev-parse HEAD)"
+          remote="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$before" != "$remote" ]; then echo 'CONCURRENT_CHANGE_NO_PUSH'; exit 1; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html README.md SHA256SUMS
+          git diff --cached --check
+          git commit -m 'Correct v2.6.0 displayed publication date to 25 Oct 2026'
+          git push origin HEAD:main
