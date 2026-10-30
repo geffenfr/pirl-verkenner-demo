@@ -1,0 +1,22 @@
+{
+  "baselineId": "PRO004-V280-PUBLIC-NO-IMPORT-BASELINE-20261030-01",
+  "baselineStatus": "ACCEPTED_FROZEN_IMMUTABLE",
+  "distributionProfile": "PUBLIC_DEMO_NO_IMPORT",
+  "html": {
+    "bytes": 11751651,
+    "originalName": "PRO004_v2.8.0_PUBLIC_DEMO_CANDIDATE_02.html",
+    "path": "index.html",
+    "sha256": "514f433330d3eb5ab35b4861baedbeacf554e54d2186287bd690cb9c69e6fe54"
+  },
+  "packageGateSha256": "5778825e9845624027df67f8a9bbb36b6da71c986bea8aded5e39c248f7b70f4",
+  "packageProfile": "CLEAN_DISTRIBUTION",
+  "packageRevision": "PUBLIC-NO-IMPORT-v2.8.0-C02-PKG-R02",
+  "previousPublicCommit": "1a481c4bc02346d86691dca62b62fd28f24505e2",
+  "previousPublicHtmlSha256": "bc76b69223d840e1d8c1ebbe86c850accc285af65be655956c0b001c5b7c49cc",
+  "releaseDate": "2026-10-30",
+  "runtime": "PRO-004-v2.8.0",
+  "schema": "pirl.public-distribution.v1",
+  "siteUrl": "https://geffenfr.github.io/pirl-verkenner-demo/",
+  "sourcePackageSha256": "a37fbcadacba0ff0e76e3275d0abcaa076b173f3f4182f0a86fe341764473e24",
+  "version": "2.8.0"
+}

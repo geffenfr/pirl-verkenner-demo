@@ -1,17 +1,22 @@
-# PIRL Process Intelligence Verkenner v2.6.0
+# PIRL Process Intelligence Verkenner v2.8.0
 
-Publieke distributie van de geaccepteerde, bevroren v2.6.0-baseline, vastgesteld op 25 oktober 2026. De weergegeven v2.6.0-releasedatum is gecorrigeerd naar 25-10-2026, de werkelijke publicatiedatum. De historische v2.5.0-datum blijft 23-10-2026.
+Publieke demoversie zonder bestandsimport. Exacte distributie van baseline `PRO004-V280-PUBLIC-NO-IMPORT-BASELINE-20261030-01`, formeel geaccepteerd en bevroren op 30 oktober 2026.
 
 - Website: https://geffenfr.github.io/pirl-verkenner-demo/
 - Distributiebestand: `index.html`
-- SHA-256: `bc76b69223d840e1d8c1ebbe86c850accc285af65be655956c0b001c5b7c49cc`
-- Bestandsgrootte: 11.708.733 bytes.
-- Gecontroleerde datumcorrectie van de publieke distributie. De oorspronkelijke immutable v2.6.0-baseline (SHA-256 32bdabee5c790be19b2784541d9272763261d31cb27bb164d72e362458fe1d66) blijft ongewijzigd.
+- Runtime: `PRO-004-v2.8.0`; releasedatum: `2026-10-30`.
+- SHA-256: `514f433330d3eb5ab35b4861baedbeacf554e54d2186287bd690cb9c69e6fe54`
+- Bestandsgrootte: 11.751.651 bytes.
+- Distributieprofiel: `PUBLIC_DEMO_NO_IMPORT`.
 
-DEV-007: onderzoeksschermen bewaren als bookmarks, verhalen en hoofdstukken ordenen, met context openen en als compacte JSON bewaren en heropenen. RELEASE-001: Menu → Releases toont versie, datum, wijzigingen en beperkingen in NL/EN. Bestaande snelheids-, periode- en Object Explorer-correcties zijn behouden.
+De ingebouwde Bank- en NovaServe-demonstraties, ondersteunde analyses, de uitgewerkte synthetische AML-case, lokale verhalen/bookmarks en gewone JSON-export blijven beschikbaar. Menu → Releases toont versie, datum, wijzigingen en beperkingen in Nederlands en Engels.
 
-Context herstellen vereist dezelfde bron en geldige verwijzingen. Laad na verhaalimport de oorspronkelijke bron via Onderzoeksbron. Lokale opslag en bestandsbediening hangen af van de browser of HTML-viewer; JSON is de overdraagbare versie. Een simulatiebookmark voert geen interventie uit.
+Deze publieke editie opent geen eigen lokale bestanden: externe datasetimport, profiel-/contractimport, storybookimport en bestandsherlezing zijn verwijderd. Een bewaarde JSON-kopie kan door deze editie niet opnieuw worden ingelezen of voor herstel worden gebruikt. Een bestaande externe bronverwijzing geeft een melding; de app kiest daarvoor geen vervangende bron.
 
-Uitsluitend publieke, fictieve of synthetische demonstratiegegevens. Bedoeld voor onderzoek en demonstratie; niet gecertificeerd voor productie of autonome organisatorische beslissingen.
+Verhalen en bookmarks staan lokaal in het browserprofiel, zonder centrale synchronisatie. Mensen die hetzelfde browserprofiel delen, kunnen deze gegevens zien. Lokale opslag is niet gegarandeerd. Gebruik geen vertrouwelijke bedrijfs- of persoonsgegevens in vrije tekstvelden.
 
-De bestaande website-URL en Pages-inrichting blijven behouden. Historische publieke versies blijven in de Git-geschiedenis. Private ontwikkelbronnen en bewijsdossiers worden niet gepubliceerd.
+Uitsluitend publieke, fictieve of synthetische demonstratiegegevens. Bedoeld voor onderzoek en demonstratie; niet gecertificeerd voor productie of autonome organisatorische beslissingen. Een simulatiebookmark voert geen interventie uit.
+
+De vaste URL en bestaande GitHub Pages-inrichting blijven behouden. De aparte v2.7.0-onderzoeksbaseline behoudt import en is niet op deze publieke root gepubliceerd. Private ontwikkelbronnen en bewijsdossiers worden niet gepubliceerd.
+
+De vorige publieke v2.6.0-uitgave blijft exact bewaard in de [Git-geschiedenis op commit 1a481c4](https://github.com/geffenfr/pirl-verkenner-demo/blob/1a481c4bc02346d86691dca62b62fd28f24505e2/index.html): 11.708.733 bytes, SHA-256 `bc76b69223d840e1d8c1ebbe86c850accc285af65be655956c0b001c5b7c49cc`. Dit is historische herkomst; de actieve root gebruikt uitsluitend bovenstaande v2.8.0-baseline.
