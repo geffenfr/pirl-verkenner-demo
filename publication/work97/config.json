@@ -1,0 +1,17 @@
+{
+  "baselineId": "PRO004-V280-PUBLIC-NO-IMPORT-BASELINE-20261030-01",
+  "phase": "pre",
+  "preparationBranch": "work97-v280-publication",
+  "previousCommit": "1a481c4bc02346d86691dca62b62fd28f24505e2",
+  "previousHtmlBytes": 11708733,
+  "previousHtmlSha256": "bc76b69223d840e1d8c1ebbe86c850accc285af65be655956c0b001c5b7c49cc",
+  "previousTree": "263458be59bee849f3c04ef0daf63d907d98dc99",
+  "publicBranch": "main",
+  "publicCommit": null,
+  "publicRepository": "geffenfr/pirl-verkenner-demo",
+  "siteUrl": "https://geffenfr.github.io/pirl-verkenner-demo/",
+  "targetGitBlobSha": "6051e9c9391b905c2c05a166e490ab94be3fd5cb",
+  "targetHtmlBytes": 11751651,
+  "targetHtmlSha256": "514f433330d3eb5ab35b4861baedbeacf554e54d2186287bd690cb9c69e6fe54",
+  "transportSha256": "fb8144408d9f746c43e01d1a2c75cc1d708ddf101b2e42ceb3e300dda361ddf8"
+}
